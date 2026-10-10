@@ -38,6 +38,18 @@ struct MeView: View {
                         Label("导入本地 TXT", systemImage: "square.and.arrow.down")
                     }
 
+                    NavigationLink {
+                        SourceSearchView()
+                    } label: {
+                        Label("书源搜索", systemImage: "magnifyingglass")
+                    }
+
+                    NavigationLink {
+                        SourceManageView()
+                    } label: {
+                        Label("书源管理", systemImage: "list.star")
+                    }
+
                     Button {
                         showSettings = true
                     } label: {

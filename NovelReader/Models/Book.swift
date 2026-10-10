@@ -49,6 +49,22 @@ enum CoverTheme: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+// MARK: - 书籍类型
+
+/// 小说与漫画分开管理
+enum BookKind: String, Codable, CaseIterable, Identifiable {
+    case novel, comic
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .novel: return "小说"
+        case .comic: return "漫画"
+        }
+    }
+}
+
 // MARK: - 书籍
 
 struct Book: Identifiable, Codable, Hashable {
@@ -62,10 +78,20 @@ struct Book: Identifiable, Codable, Hashable {
     var addedAt: Date
     /// 已完成阅读的标记（用于书架角标）
     var isFinished: Bool
+    /// 书籍类型（nil 视为小说，兼容旧数据）
+    var kind: BookKind?
+    /// 网络书：所属书源 id（本地书为 nil）
+    var sourceID: String?
+    /// 网络书：每章对应的链接（小说=正文页；漫画=该话图片页）
+    var chapterLinks: [String]?
+    /// 漫画：每话的图片 URL 列表（本地漫画直接填 URL；网络漫画抓取后回填）
+    var pageImages: [[String]]?
 
     var wordCount: Int { chapters.reduce(0) { $0 + $1.wordCount } }
 
     var chapterCount: Int { chapters.count }
+
+    var isComic: Bool { kind == .comic }
 
     init(
         id: UUID = UUID(),
@@ -76,7 +102,11 @@ struct Book: Identifiable, Codable, Hashable {
         coverTheme: CoverTheme = .indigo,
         chapters: [Chapter] = [],
         addedAt: Date = Date(),
-        isFinished: Bool = false
+        isFinished: Bool = false,
+        kind: BookKind? = nil,
+        sourceID: String? = nil,
+        chapterLinks: [String]? = nil,
+        pageImages: [[String]]? = nil
     ) {
         self.id = id
         self.title = title
@@ -87,6 +117,10 @@ struct Book: Identifiable, Codable, Hashable {
         self.chapters = chapters
         self.addedAt = addedAt
         self.isFinished = isFinished
+        self.kind = kind
+        self.sourceID = sourceID
+        self.chapterLinks = chapterLinks
+        self.pageImages = pageImages
     }
 }
 

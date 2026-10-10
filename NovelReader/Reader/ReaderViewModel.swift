@@ -133,6 +133,41 @@ final class ReaderViewModel: ObservableObject {
         jump(toChapter: previous)
     }
 
+    // MARK: - 网络章节（书源书按需抓取）
+
+    var isNetworkBook: Bool { book.sourceID != nil }
+
+    /// 确保某章正文可用：网络书按需抓取，成功后更新书库并重排版
+    @discardableResult
+    func ensureChapterContent(_ index: Int) async -> String? {
+        guard book.chapters.indices.contains(index) else { return nil }
+        let existing = book.chapters[index].content
+        if !existing.isEmpty { return existing }
+
+        guard let sourceID = book.sourceID,
+              let links = book.chapterLinks,
+              links.indices.contains(index),
+              let source = library.source(withID: sourceID) else { return nil }
+
+        do {
+            let text = try await SourceEngine.fetchChapterText(source: source, link: links[index])
+            applyChapterContent(text, to: index)
+            return text
+        } catch {
+            library.lastError = "章节加载失败：\(error.localizedDescription)"
+            return nil
+        }
+    }
+
+    func applyChapterContent(_ text: String, to index: Int) {
+        guard var updated = library.book(withID: bookID),
+              updated.chapters.indices.contains(index) else { return }
+        updated.chapters[index].content = text
+        library.update(updated)
+        book = updated
+        invalidateLayout()
+    }
+
     func persist() {
         library.saveProgress(progress, for: bookID)
     }

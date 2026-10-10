@@ -67,6 +67,32 @@ struct ReaderSettingsSheet: View {
                     }
                 }
 
+                Section("听书") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Label("语速", systemImage: "waveform")
+                            Spacer(minLength: 8)
+                            Text(SpeechPreset.speedName(settings.speechRate))
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                        Slider(value: $settings.speechRate, in: 0.1...1.0, step: 0.05)
+                            .accessibilityLabel("听书语速")
+                    }
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Label("语调", systemImage: "music.note")
+                            Spacer(minLength: 8)
+                            Text(SpeechPreset.pitchName(settings.speechPitch))
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                        Slider(value: $settings.speechPitch, in: 0.5...2.0, step: 0.05)
+                            .accessibilityLabel("听书语调")
+                    }
+                }
+
                 Section("屏幕") {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {

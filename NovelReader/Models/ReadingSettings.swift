@@ -116,6 +116,8 @@ final class ReadingSettingsStore: ObservableObject {
         static let brightness = "reader.brightness"
         static let keepAwake = "reader.keepAwake"
         static let showPageFooter = "reader.showPageFooter"
+        static let speechRate = "reader.speechRate"
+        static let speechPitch = "reader.speechPitch"
     }
 
     private let defaults: UserDefaults
@@ -148,6 +150,14 @@ final class ReadingSettingsStore: ObservableObject {
     @Published var showPageFooter: Bool {
         didSet { defaults.set(showPageFooter, forKey: Key.showPageFooter) }
     }
+    /// 听书语速（AVSpeechUtteranceRate，0.1 ~ 1.0，0.5 为正常）
+    @Published var speechRate: Float {
+        didSet { defaults.set(Double(speechRate), forKey: Key.speechRate) }
+    }
+    /// 听书语调（0.5 ~ 2.0，1.0 为正常）
+    @Published var speechPitch: Float {
+        didSet { defaults.set(Double(speechPitch), forKey: Key.speechPitch) }
+    }
 
     /// 每次影响分页的参数变化都会让签名改变，用于触发重新分页并清空页面缓存
     var layoutSignature: String {
@@ -171,7 +181,9 @@ final class ReadingSettingsStore: ObservableObject {
             Key.fontName: "PingFang SC",
             Key.brightness: 1.0,
             Key.keepAwake: true,
-            Key.showPageFooter: true
+            Key.showPageFooter: true,
+            Key.speechRate: 0.5,
+            Key.speechPitch: 1.0
         ])
 
         self.fontSize = CGFloat(defaults.double(forKey: Key.fontSize))
@@ -185,6 +197,10 @@ final class ReadingSettingsStore: ObservableObject {
         self.brightness = savedBrightness
         self.keepScreenAwake = defaults.bool(forKey: Key.keepAwake)
         self.showPageFooter = defaults.bool(forKey: Key.showPageFooter)
+        let savedRate = defaults.object(forKey: Key.speechRate) as? Double ?? 0.5
+        self.speechRate = Float(savedRate)
+        let savedPitch = defaults.object(forKey: Key.speechPitch) as? Double ?? 1.0
+        self.speechPitch = Float(savedPitch)
     }
 
     // MARK: 排版

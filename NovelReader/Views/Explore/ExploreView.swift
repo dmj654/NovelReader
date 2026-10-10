@@ -21,6 +21,8 @@ struct ExploreView: View {
                 VStack(alignment: .leading, spacing: 24) {
                     heroCard
 
+                    sourceEntry
+
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 8) {
                             ForEach(categories, id: \.self) { category in
@@ -65,6 +67,29 @@ struct ExploreView: View {
                 }
             }
         }
+    }
+
+    private var sourceEntry: some View {
+        HStack(spacing: 12) {
+            NavigationLink {
+                SourceSearchView()
+            } label: {
+                Label("书源搜索", systemImage: "magnifyingglass")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .buttonStyle(.borderedProminent)
+
+            NavigationLink {
+                SourceManageView()
+            } label: {
+                Label("书源管理", systemImage: "list.star")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .buttonStyle(.bordered)
+        }
+        .padding(.horizontal, 20)
     }
 
     private var heroCard: some View {

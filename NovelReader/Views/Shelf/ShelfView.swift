@@ -10,26 +10,29 @@ struct ShelfView: View {
     @State private var showImporter = false
     @State private var showImportTip = false
     @State private var readerBook: Book?
+    /// 书架分区：小说与漫画分开管理
+    @State private var section: BookKind = .novel
 
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 16), count: 3)
 
     private var visibleBooks: [Book] {
-        guard !searchText.trimmed.isEmpty else { return library.books }
-        return library.books.filter {
+        let base = library.books.filter { ($0.kind ?? .novel) == section }
+        guard !searchText.trimmed.isEmpty else { return base }
+        return base.filter {
             $0.title.localizedCaseInsensitiveContains(searchText.trimmed) ||
             $0.author.localizedCaseInsensitiveContains(searchText.trimmed)
         }
     }
 
     private var continueBook: Book? {
-        library.books.first { library.progress(for: $0.id).globalPageIndex > 0 && !$0.isFinished }
-            ?? library.books.first
+        guard section == .novel else { return nil }
+        return library.books.first { ($0.kind ?? .novel) == .novel && library.progress(for: $0.id).globalPageIndex > 0 && !$0.isFinished }
     }
 
     var body: some View {
         NavigationStack {
             Group {
-                if library.books.isEmpty {
+                if visibleBooks.isEmpty && searchText.trimmed.isEmpty {
                     emptyState
                 } else if visibleBooks.isEmpty {
                     ContentUnavailableView.search(text: searchText)
@@ -40,12 +43,13 @@ struct ShelfView: View {
                                 ContinueCard(book: continueBook) {
                                     readerBook = continueBook
                                 }
+                                .fadeIn()
                             }
 
                             VStack(alignment: .leading, spacing: 16) {
                                 SectionHeader(
-                                    title: "全部藏书",
-                                    subtitle: "\(library.books.count) 本",
+                                    title: section == .novel ? "全部藏书" : "全部漫画",
+                                    subtitle: "\(visibleBooks.count) 本",
                                     isGrid: $isGrid
                                 )
 
@@ -55,7 +59,7 @@ struct ShelfView: View {
                                             NavigationLink(value: book.id) {
                                                 BookCoverView(book: book, progress: library.progress(for: book.id))
                                             }
-                                            .buttonStyle(.plain)
+                                            .buttonStyle(ScaleButtonStyle())
                                             .contextMenu {
                                                 Button(role: .destructive) {
                                                     library.remove(book)
@@ -71,7 +75,7 @@ struct ShelfView: View {
                                             NavigationLink(value: book.id) {
                                                 BookRowView(book: book, progress: library.progress(for: book.id))
                                             }
-                                            .buttonStyle(.plain)
+                                            .buttonStyle(ScaleButtonStyle())
                                         }
                                     }
                                 }
@@ -84,7 +88,21 @@ struct ShelfView: View {
                 }
             }
             .navigationTitle("书架")
-            .searchable(text: $searchText, prompt: "搜索书名或作者")
+            .searchable(text: $searchText, prompt: section == .comic ? "搜索漫画" : "搜索书名或作者")
+            .safeAreaInset(edge: .top, spacing: 0) {
+                Picker("分区", selection: $section) {
+                    ForEach(BookKind.allCases) { item in
+                        Text(item.displayName).tag(item)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 8)
+                .background(.bar)
+                .onChange(of: section) { _, _ in
+                    withAnimation(.easeInOut(duration: 0.2)) { searchText = "" }
+                }
+            }
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Button {
@@ -118,7 +136,11 @@ struct ShelfView: View {
                 Text(library.lastError ?? "未知错误")
             }
             .fullScreenCover(item: $readerBook) { book in
-                ReaderView(book: book, library: library, settings: settings)
+                if book.isComic {
+                    ComicReaderView(book: book)
+                } else {
+                    ReaderView(book: book, library: library, settings: settings)
+                }
             }
         }
     }
@@ -126,26 +148,30 @@ struct ShelfView: View {
     private var emptyState: some View {
         VStack(spacing: 20) {
             Spacer(minLength: 0)
-            Image(systemName: "books.vertical")
+            Image(systemName: section == .comic ? "photo.on.rectangle.angled" : "books.vertical")
                 .font(.system(size: 52))
                 .foregroundStyle(.secondary)
                 .accessibilityHidden(true)
             VStack(spacing: 8) {
-                Text("书架还是空的")
+                Text(section == .comic ? "还没有漫画" : "书架还是空的")
                     .font(.headline)
-                Text("内置示例已就绪，也可以导入本地 TXT 小说。")
+                Text(section == .comic
+                     ? "到「发现 → 书源搜索」添加漫画，或等后续版本支持本地导入。"
+                     : "内置示例已就绪，也可以导入本地 TXT 小说。")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
             }
-            Button {
-                showImporter = true
-            } label: {
-                Label("导入 TXT", systemImage: "square.and.arrow.down")
-                    .font(.subheadline.weight(.semibold))
+            if section == .novel {
+                Button {
+                    showImporter = true
+                } label: {
+                    Label("导入 TXT", systemImage: "square.and.arrow.down")
+                        .font(.subheadline.weight(.semibold))
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 40)

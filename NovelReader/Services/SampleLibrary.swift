@@ -2,7 +2,50 @@ import Foundation
 
 /// 内置示例书库（原创内容，无版权风险），首次启动时写入书架。
 enum SampleLibrary {
-    static var books: [Book] { [xinghai, jiuxiang, changye] }
+    static var books: [Book] { [xinghai, jiuxiang, changye, comicDemo] }
+
+    /// 内置示例书源：仅示范 JSON 格式，站点不可用，导入真实书源后请删除或禁用。
+    static var bookSources: [BookSource] { [demoSource] }
+
+    private static let demoSource = BookSource(
+        id: "demo-source",
+        name: "示例书源（不可用）",
+        baseURL: "https://www.example.com",
+        searchTemplate: "https://www.example.com/search?q={query}&page={page}",
+        isComic: false,
+        isEnabled: false,
+        sortOrder: 0,
+        rules: SourceRules(
+            listPattern: #"<a[^>]+href="([^"]+)"[^>]*title="([^"]+)""#,
+            titleGroup: 2,
+            linkGroup: 1,
+            contentPattern: #"<div[^>]*id="content"[^>]*>([\s\S]*?)</div>"#
+        )
+    )
+
+    /// 示例漫画：图片来自 picsum.photos 公共占位服务，联网时可见
+    private static let comicDemo = Book(
+        title: "云上小镇",
+        author: "示例漫画",
+        intro: "内置漫画示例：三话占位画面，用于体验漫画阅读器与分区管理。",
+        category: "漫画",
+        coverTheme: .teal,
+        chapters: [
+            Chapter(title: "第 1 话 搬家那天", content: ""),
+            Chapter(title: "第 2 话 屋顶的风", content: ""),
+            Chapter(title: "第 3 话 一盏灯", content: "")
+        ],
+        kind: .comic,
+        pageImages: comicPages
+    )
+
+    private static let comicPages: [[String]] = {
+        (1...3).map { chapter in
+            (1...5).map { page in
+                "https://picsum.photos/seed/yunzhensiao-\(chapter)-\(page)/800/1200"
+            }
+        }
+    }()
 
     // MARK: 1. 星海渡口（科幻）
 

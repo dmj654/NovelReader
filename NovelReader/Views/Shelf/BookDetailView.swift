@@ -11,6 +11,7 @@ struct BookDetailView: View {
     @State private var introExpanded = false
     @State private var shareItem: ShareItem?
     @State private var showDeleteConfirm = false
+    @State private var showComicReader = false
 
     /// 用包装类型替代 `URL: @retroactive Identifiable`，兼容 Swift 5.9 / 6 两种编译器
     struct ShareItem: Identifiable {
@@ -72,6 +73,9 @@ struct BookDetailView: View {
             ShareSheet(items: [item.url])
                 .presentationDetents([.medium])
         }
+        .fullScreenCover(isPresented: $showComicReader) {
+            ComicReaderView(book: current)
+        }
     }
 
     // MARK: - 头部
@@ -92,7 +96,7 @@ struct BookDetailView: View {
 
                 HStack(spacing: 8) {
                     TagView(text: current.category)
-                    TagView(text: current.wordCount.formatted() + " 字")
+                    TagView(text: current.isComic ? "\(current.chapterCount) 话" : current.wordCount.formatted() + " 字")
                 }
 
                 Text(progress.percent > 0 ? "已读 \(progress.percentText)" : "尚未开始")
@@ -111,11 +115,18 @@ struct BookDetailView: View {
     private var actionRow: some View {
         HStack(spacing: 12) {
             Button {
-                onStartReading()
+                if current.isComic {
+                    showComicReader = true
+                } else {
+                    onStartReading()
+                }
             } label: {
-                Label(progress.percent > 0 ? "继续阅读" : "开始阅读", systemImage: "book.fill")
-                    .font(.subheadline.weight(.semibold))
-                    .frame(maxWidth: .infinity, minHeight: 44)
+                Label(
+                    current.isComic ? "开始阅读" : (progress.percent > 0 ? "继续阅读" : "开始阅读"),
+                    systemImage: current.isComic ? "photo.on.rectangle" : "book.fill"
+                )
+                .font(.subheadline.weight(.semibold))
+                .frame(maxWidth: .infinity, minHeight: 44)
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)

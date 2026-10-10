@@ -9,6 +9,8 @@ struct ReaderPage: Identifiable, Hashable {
     let pagesInChapter: Int
     let globalIndex: Int
     let totalPages: Int
+    /// 本页文本在**章节全文**中的区间（听书高亮定位用）
+    let rangeInChapter: NSRange
     let attributedText: NSAttributedString
 
     static func == (lhs: ReaderPage, rhs: ReaderPage) -> Bool {
@@ -93,6 +95,7 @@ enum ChapterPaginator {
                         pagesInChapter: ranges.count,
                         globalIndex: pages.count,
                         totalPages: 0, // 稍后回填
+                        rangeInChapter: range,
                         attributedText: slice
                     )
                 )
@@ -109,6 +112,7 @@ enum ChapterPaginator {
                 pagesInChapter: page.pagesInChapter,
                 globalIndex: index,
                 totalPages: total,
+                rangeInChapter: page.rangeInChapter,
                 attributedText: page.attributedText
             )
         }

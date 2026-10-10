@@ -6,6 +6,8 @@ struct PagedReader: UIViewControllerRepresentable {
     let pages: [ReaderPage]
     let backgroundColor: UIColor
     @Binding var currentIndex: Int
+    /// 听书跟读：返回某页需要高亮的页内区间（nil = 不高亮）
+    var highlightFor: (Int) -> NSRange? = { _ in nil }
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -32,6 +34,8 @@ struct PagedReader: UIViewControllerRepresentable {
     func updateUIViewController(_ controller: UIPageViewController, context: Context) {
         context.coordinator.parent = self
         context.coordinator.invalidateCacheIfNeeded()
+        // 听书高亮变化时刷新缓存页
+        context.coordinator.refreshHighlights()
 
         let target = min(max(currentIndex, 0), max(pages.count - 1, 0))
         guard pages.indices.contains(target) else { return }
@@ -61,13 +65,29 @@ struct PagedReader: UIViewControllerRepresentable {
             }
         }
 
+        /// 把最新的高亮区间写回缓存中的每一页
+        func refreshHighlights() {
+            for (index, host) in cache {
+                let page = parent.pages.indices.contains(index) ? parent.pages[index] : nil
+                host.rootView = ReaderPageContainer(
+                    page: page,
+                    backgroundColor: parent.backgroundColor,
+                    highlightRange: parent.highlightFor(index)
+                )
+            }
+        }
+
         func controller(at index: Int) -> UIViewController {
             if let cached = cache[index] { return cached }
             guard parent.pages.indices.contains(index) else {
                 return UIHostingController(rootView: ReaderPageContainer(page: nil, backgroundColor: parent.backgroundColor))
             }
             let host = UIHostingController(
-                rootView: ReaderPageContainer(page: parent.pages[index], backgroundColor: parent.backgroundColor)
+                rootView: ReaderPageContainer(
+                    page: parent.pages[index],
+                    backgroundColor: parent.backgroundColor,
+                    highlightRange: parent.highlightFor(index)
+                )
             )
             host.view.backgroundColor = parent.backgroundColor
             cache[index] = host
@@ -112,6 +132,7 @@ struct PagedReader: UIViewControllerRepresentable {
 struct ReaderPageContainer: View {
     let page: ReaderPage?
     let backgroundColor: UIColor
+    var highlightRange: NSRange? = nil
 
     var body: some View {
         Color(uiColor: backgroundColor)
@@ -129,8 +150,12 @@ struct ReaderPageContainer: View {
                         .padding(.bottom, 8)
                         .accessibilityHidden(true)
 
-                        ReaderPageView(attributedText: page.attributedText, backgroundColor: backgroundColor)
-                            .padding(.horizontal, 24)
+                        ReaderPageView(
+                            attributedText: page.attributedText,
+                            backgroundColor: backgroundColor,
+                            highlightRange: highlightRange
+                        )
+                        .padding(.horizontal, 24)
 
                         Spacer(minLength: 0)
 

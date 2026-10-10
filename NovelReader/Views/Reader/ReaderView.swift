@@ -3,12 +3,17 @@ import UIKit
 
 struct ReaderView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var settings: ReadingSettingsStore
 
     @StateObject private var viewModel: ReaderViewModel
+    @StateObject private var speech = SpeechController()
+
     @State private var showContents = false
     @State private var showSettings = false
+    @State private var isSpeechMode = false
+    @State private var appeared = false
 
     private let book: Book
 
@@ -28,8 +33,6 @@ struct ReaderView: View {
                     .ignoresSafeArea()
 
                 content(in: proxy.size)
-                    .contentShape(Rectangle())
-                    .onTapGesture { viewModel.toggleChrome() }
 
                 chrome(size: proxy.size)
             }
@@ -42,10 +45,41 @@ struct ReaderView: View {
             .onChange(of: viewModel.currentIndex) { _, _ in
                 viewModel.persist()
             }
+            .onChange(of: viewModel.activeChapterIndex) { _, newIndex in
+                // 手动跳章或听书翻章后：听书模式下从头朗读新章
+                if isSpeechMode {
+                    restartSpeech(at: newIndex)
+                }
+                prefetchAround(newIndex)
+            }
             .task {
                 viewModel.onAppear()
                 viewModel.updatePageSize(pageBodySize(for: proxy.size))
             }
+            .task(id: viewModel.activeChapterIndex) {
+                // 书源书：进入章节时按需抓取正文
+                if viewModel.isNetworkBook {
+                    await viewModel.ensureChapterContent(viewModel.activeChapterIndex)
+                }
+            }
+        }
+        .opacity(appeared ? 1 : 0)
+        .rotation3DEffect(
+            .degrees(appeared ? 0 : -14),
+            axis: (x: 0, y: 1, z: 0),
+            anchor: .leading,
+            perspective: 0.55
+        )
+        .onAppear {
+            // 一章读完 → 跳到下一章；onChange(of: activeChapterIndex) 会自动重新开始朗读
+            speech.onChapterFinish = { next in
+                viewModel.jump(toChapter: next)
+            }
+            guard !reduceMotion else {
+                appeared = true
+                return
+            }
+            withAnimation(.easeOut(duration: 0.38)) { appeared = true }
         }
         .toolbar(.hidden, for: .navigationBar)
         .preferredColorScheme(settings.theme.colorScheme)
@@ -63,7 +97,10 @@ struct ReaderView: View {
             ReaderSettingsSheet()
                 .environmentObject(settings)
         }
-        .onDisappear { viewModel.onDisappear() }
+        .onDisappear {
+            speech.stop()
+            viewModel.onDisappear()
+        }
         .accessibilityAction(.escape) { dismiss() }
     }
 
@@ -82,12 +119,52 @@ struct ReaderView: View {
                     currentIndex: Binding(
                         get: { viewModel.currentIndex },
                         set: { viewModel.jump(toGlobal: $0) }
-                    )
+                    ),
+                    highlightFor: { pageIndex in
+                        speechHighlightRange(forPageAt: pageIndex)
+                    }
                 )
                 .ignoresSafeArea(edges: .bottom)
+                .overlay {
+                    pageTapRegions
+                }
             }
         case .scroll:
             ScrollReaderView(viewModel: viewModel, backgroundColor: backgroundColor)
+                .contentShape(Rectangle())
+                .onTapGesture { viewModel.toggleChrome() }
+        }
+    }
+
+    /// 仿真模式的三区点击：左 = 上翻/上一句，中 = 呼出工具条，右 = 下翻/下一句
+    private var pageTapRegions: some View {
+        HStack(spacing: 0) {
+            Color.clear
+                .contentShape(Rectangle())
+                .onTapGesture { handleLeadingTap() }
+            Color.clear
+                .contentShape(Rectangle())
+                .onTapGesture { viewModel.toggleChrome() }
+            Color.clear
+                .contentShape(Rectangle())
+                .onTapGesture { handleTrailingTap() }
+        }
+        .accessibilityHidden(true)
+    }
+
+    private func handleLeadingTap() {
+        if isSpeechMode {
+            speech.previousSentence()
+        } else {
+            viewModel.jump(toGlobal: viewModel.currentIndex - 1)
+        }
+    }
+
+    private func handleTrailingTap() {
+        if isSpeechMode {
+            speech.nextSentence()
+        } else {
+            viewModel.jump(toGlobal: viewModel.currentIndex + 1)
         }
     }
 
@@ -96,6 +173,67 @@ struct ReaderView: View {
         let width = max(size.width - 48, 1)
         let height = max(size.height - 96, 1)
         return CGSize(width: width, height: height)
+    }
+
+    // MARK: - 听书
+
+    /// 把听书高亮（章节内区间）映射为某页内的相对区间
+    private func speechHighlightRange(forPageAt pageIndex: Int) -> NSRange? {
+        guard isSpeechMode,
+              let highlight = speech.highlight,
+              viewModel.pages.indices.contains(pageIndex) else { return nil }
+        let page = viewModel.pages[pageIndex]
+        guard page.chapterIndex == highlight.chapterIndex else { return nil }
+
+        let intersection = NSIntersectionRange(page.rangeInChapter, highlight.range)
+        guard intersection.length > 0 else { return nil }
+        return NSRange(
+            location: intersection.location - page.rangeInChapter.location,
+            length: intersection.length
+        )
+    }
+
+    private func toggleSpeechMode() {
+        if isSpeechMode {
+            speech.stop()
+            isSpeechMode = false
+        } else {
+            isSpeechMode = true
+            startSpeech(at: viewModel.activeChapterIndex)
+            if !viewModel.isChromeVisible {
+                viewModel.toggleChrome()
+            }
+        }
+    }
+
+    private func startSpeech(at chapterIndex: Int) {
+        Task {
+            let text = await viewModel.ensureChapterContent(chapterIndex)
+                ?? viewModel.book.chapters[safe: chapterIndex]?.content
+                ?? ""
+            speech.start(
+                chapter: chapterIndex,
+                text: text,
+                rate: settings.speechRate,
+                pitch: settings.speechPitch
+            )
+        }
+    }
+
+    private func restartSpeech(at chapterIndex: Int) {
+        guard isSpeechMode else { return }
+        startSpeech(at: chapterIndex)
+    }
+
+    /// 预取相邻章节（网络书），保证一章读完能无缝接下一章
+    private func prefetchAround(_ chapterIndex: Int) {
+        guard viewModel.isNetworkBook else { return }
+        let next = chapterIndex + 1
+        Task {
+            if viewModel.book.chapters.indices.contains(next) {
+                await viewModel.ensureChapterContent(next)
+            }
+        }
     }
 
     // MARK: - 浮层工具条
@@ -107,6 +245,10 @@ struct ReaderView: View {
                 topBar
                     .transition(.move(edge: .top).combined(with: .opacity))
                 Spacer(minLength: 0)
+                if isSpeechMode {
+                    speechBar
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
                 bottomBar
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
@@ -162,6 +304,114 @@ struct ReaderView: View {
         .background(.bar)
     }
 
+    // MARK: 听书控制区
+
+    private var speechBar: some View {
+        VStack(spacing: 10) {
+            if let remaining = speech.sleepRemainingSeconds {
+                Text(String(format: "定时停止：%d 分 %02d 秒后", remaining / 60, remaining % 60))
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+
+            HStack(spacing: 0) {
+                speechControlItem("上一句", systemImage: "backward.end.fill") {
+                    speech.previousSentence()
+                }
+                Button {
+                    speech.togglePlayPause()
+                } label: {
+                    Image(systemName: speech.isPaused ? "play.circle.fill" : "pause.circle.fill")
+                        .font(.system(size: 34))
+                        .frame(width: 60, height: 44)
+                }
+                .accessibilityLabel(speech.isPaused ? "继续朗读" : "暂停朗读")
+
+                speechControlItem("下一句", systemImage: "forward.end.fill") {
+                    speech.nextSentence()
+                }
+
+                Divider().frame(height: 28)
+
+                speechControlItem("上一章", systemImage: "backward") {
+                    viewModel.goToPreviousChapter()
+                }
+                speechControlItem("下一章", systemImage: "forward") {
+                    viewModel.goToNextChapter()
+                }
+            }
+
+            HStack(spacing: 10) {
+                Menu {
+                    ForEach(SpeechPreset.speeds) { preset in
+                        Button(preset.label) {
+                            settings.speechRate = preset.value
+                            speech.updateRate(preset.value)
+                        }
+                    }
+                } label: {
+                    speechLabel("语速 \(SpeechPreset.speedName(settings.speechRate))")
+                }
+
+                Menu {
+                    ForEach(SpeechPreset.pitches) { preset in
+                        Button(preset.label) {
+                            settings.speechPitch = preset.value
+                            speech.updatePitch(preset.value)
+                        }
+                    }
+                } label: {
+                    speechLabel("语调 \(SpeechPreset.pitchName(settings.speechPitch))")
+                }
+
+                Menu {
+                    ForEach([5, 10, 15, 30, 60], id: \.self) { minutes in
+                        Button("\(minutes) 分钟") {
+                            speech.scheduleSleepTimer(minutes: minutes)
+                        }
+                    }
+                    Button("取消定时", role: .destructive) {
+                        speech.cancelSleepTimer()
+                    }
+                } label: {
+                    speechLabel("定时")
+                }
+
+                Button {
+                    toggleSpeechMode()
+                } label: {
+                    speechLabel("退出听书")
+                }
+            }
+        }
+        .padding(.top, 12)
+        .background(.bar)
+    }
+
+    private func speechControlItem(_ title: String, systemImage: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 3) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 16))
+                Text(title)
+                    .font(.caption2)
+            }
+            .frame(minWidth: 56, minHeight: 44)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
+    }
+
+    private func speechLabel(_ text: String) -> some View {
+        Text(text)
+            .font(.caption)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(Color(uiColor: .tertiarySystemFill), in: Capsule())
+    }
+
+    // MARK: 底部主工具条
+
     private var bottomBar: some View {
         VStack(spacing: 12) {
             HStack {
@@ -196,8 +446,8 @@ struct ReaderView: View {
                 toolButton(settings.theme == .night ? "日间" : "夜间", systemImage: settings.theme == .night ? "sun.max" : "moon") {
                     settings.theme = settings.theme == .night ? .paper : .night
                 }
-                toolButton("字号", systemImage: "textformat.size") {
-                    showSettings = true
+                toolButton(isSpeechMode ? "停止听书" : "听书", systemImage: isSpeechMode ? "waveform" : "headphones") {
+                    toggleSpeechMode()
                 }
                 toolButton("设置", systemImage: "gearshape") {
                     showSettings = true
@@ -221,6 +471,38 @@ struct ReaderView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(title)
+    }
+}
+
+// MARK: - 听书预设
+
+enum SpeechPreset {
+    struct Preset: Identifiable {
+        let label: String
+        let value: Float
+        var id: Float { value }
+    }
+
+    static let speeds: [Preset] = [
+        Preset(label: "很慢", value: 0.35),
+        Preset(label: "慢", value: 0.42),
+        Preset(label: "正常", value: 0.5),
+        Preset(label: "快", value: 0.6),
+        Preset(label: "很快", value: 0.7)
+    ]
+
+    static let pitches: [Preset] = [
+        Preset(label: "低沉", value: 0.8),
+        Preset(label: "正常", value: 1.0),
+        Preset(label: "清亮", value: 1.25)
+    ]
+
+    static func speedName(_ value: Float) -> String {
+        speeds.first { abs($0.value - value) < 0.03 }?.label ?? String(format: "%.2f", value)
+    }
+
+    static func pitchName(_ value: Float) -> String {
+        pitches.first { abs($0.value - value) < 0.05 }?.label ?? String(format: "%.2f", value)
     }
 }
 
@@ -293,5 +575,13 @@ private struct ReadingSkeleton: View {
         .padding(.top, 80)
         .redacted(reason: .placeholder)
         .accessibilityLabel("正在排版正文")
+    }
+}
+
+// MARK: - 安全下标
+
+private extension Array {
+    subscript(safe index: Int) -> Element? {
+        indices.contains(index) ? self[index] : nil
     }
 }
