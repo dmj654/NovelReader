@@ -1,0 +1,64 @@
+# XcodeGen 工程描述：用于自动生成 NovelReader.xcodeproj
+# 使用方式（在 macOS 上）：brew install xcodegen && xcodegen generate
+# 也可以直接在 Xcode 里手动新建工程（见 README 第三节），两种方式任选其一。
+
+name: NovelReader
+
+options:
+  bundleIdPrefix: com.novelreader
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+  groupSortPosition: none
+  xcodeVersion: "15.0"
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    ENABLE_PREVIEWS: "YES"
+    CLANG_ENABLE_MODULES: "YES"
+    SWIFT_EMIT_LOC_STRINGS: "YES"
+    ENABLE_USER_SELECTED_FILES: "readonly"
+
+targets:
+  NovelReader:
+    type: application
+    platform: iOS
+    sources:
+      - path: NovelReader
+        excludes:
+          - "Resources/**"
+          - "Preview Content/**"
+          - "**/*.md"
+    resources:
+      - path: NovelReader/Resources/Assets.xcassets
+    settings:
+      base:
+        PRODUCT_NAME: 阅栈
+        PRODUCT_BUNDLE_IDENTIFIER: com.novelreader.app
+        TARGETED_DEVICE_FAMILY: "1,2"
+        GENERATE_INFOPLIST_FILE: "YES"
+        # iOS 17 起可用生成的启动屏，无需 LaunchScreen.storyboard
+        INFOPLIST_KEY_UILaunchScreen_Generation: "YES"
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: "YES"
+        INFOPLIST_KEY_UIRequiredDeviceCapabilities: "arm64"
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait"
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        # 允许"文件"App 直接把 TXT 分享/打开到本 App
+        INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace: "YES"
+        INFOPLIST_KEY_CFBundleDisplayName: 阅栈
+        INFOPLIST_KEY_LSApplicationCategoryType: "public.app-category.books"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: ""   # 本机 Xcode 自动签名时会写入，仓库中留空
+
+schemes:
+  NovelReader:
+    build:
+      targets:
+        NovelReader: all
+    run:
+      config: Debug
+    archive:
+      config: Release
