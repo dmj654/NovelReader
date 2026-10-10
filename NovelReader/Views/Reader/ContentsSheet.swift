@@ -1,5 +1,12 @@
 import SwiftUI
 
+/// 行模型：ForEach 需要 Identifiable 元素，SwiftUI 不支持无标签元组数组
+private struct ChapterRow: Identifiable {
+    let index: Int
+    let chapter: Chapter
+    var id: UUID { chapter.id }
+}
+
 /// 目录抽屉：Modal 必须提供关闭按钮，同时保留下滑关闭手势（系统默认）
 ///
 /// 注意：body 拆成多个计算属性，避免单个表达式过于复杂导致
@@ -16,10 +23,12 @@ struct ContentsSheet: View {
         searchText.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private var filtered: [(Int, Chapter)] {
-        let enumerated = Array(chapters.enumerated())
-        guard !trimmedQuery.isEmpty else { return enumerated }
-        return enumerated.filter { $0.element.title.localizedCaseInsensitiveContains(trimmedQuery) }
+    private var filtered: [ChapterRow] {
+        let rows = chapters.enumerated().map { row in
+            ChapterRow(index: row.offset, chapter: row.element)
+        }
+        guard !trimmedQuery.isEmpty else { return rows }
+        return rows.filter { $0.chapter.title.localizedCaseInsensitiveContains(trimmedQuery) }
     }
 
     var body: some View {
@@ -55,8 +64,8 @@ struct ContentsSheet: View {
     private var chapterList: some View {
         List {
             Section {
-                ForEach(filtered, id: \.element.id) { index, chapter in
-                    row(for: index, chapter: chapter)
+                ForEach(filtered) { row in
+                    rowView(row)
                 }
             } header: {
                 Text("共 \(chapters.count) 章")
@@ -70,14 +79,14 @@ struct ContentsSheet: View {
         )
     }
 
-    private func row(for index: Int, chapter: Chapter) -> some View {
-        let isActive = index == activeChapterIndex
+    private func rowView(_ row: ChapterRow) -> some View {
+        let isActive = row.index == activeChapterIndex
 
         return Button {
-            onSelect(index)
+            onSelect(row.index)
         } label: {
             HStack(spacing: 12) {
-                Text(chapter.title)
+                Text(row.chapter.title)
                     .font(.body)
                     .foregroundStyle(isActive ? Color.accentColor : Color.primary)
                     .lineLimit(2)
@@ -89,7 +98,7 @@ struct ContentsSheet: View {
                 }
             }
         }
-        .accessibilityLabel(chapter.title)
+        .accessibilityLabel(row.chapter.title)
         .accessibilityAddTraits(isActive ? .isSelected : [])
     }
 }
