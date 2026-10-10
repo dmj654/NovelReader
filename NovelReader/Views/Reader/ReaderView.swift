@@ -71,9 +71,11 @@ struct ReaderView: View {
             perspective: 0.55
         )
         .onAppear {
-            // 一章读完 → 跳到下一章；onChange(of: activeChapterIndex) 会自动重新开始朗读
+            // 一章读完 → 跳到下一章；onChange(of: activeChapterIndex) 会自动重新开始朗读。
+            // 跳转交给 onChange 重启朗读，这里返回 nil 让合成器先停下。
             speech.onChapterFinish = { next in
                 viewModel.jump(toChapter: next)
+                return nil
             }
             guard !reduceMotion else {
                 appeared = true
