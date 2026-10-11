@@ -1,5 +1,13 @@
 import SwiftUI
 import Combine
+import UIKit
+
+/// 导入结果：成功与否 + 可直接展示给用户的一句话说明
+struct LibraryImportOutcome {
+    let success: Bool
+    let message: String
+    let bookID: UUID?
+}
 
 /// 书架数据中枢：书籍与阅读进度的持久化、增删改、txt 导入、书源管理。
 final class LibraryStore: ObservableObject {
@@ -28,6 +36,21 @@ final class LibraryStore: ObservableObject {
         }
         progress = Self.decode([UUID: ReadingProgress].self, from: progressURL) ?? [:]
         sources = Self.decode([BookSource].self, from: sourcesURL) ?? SampleLibrary.bookSources
+        migrateLegacySampleComic()
+    }
+
+    /// 旧版示例漫画用的是外网占位图，改成 App 本地绘制的页面，保证离线可看
+    private func migrateLegacySampleComic() {
+        for index in books.indices {
+            guard books[index].isComic, let pages = books[index].pageImages else { continue }
+            guard pages.joined().contains("picsum.photos") else { continue }
+            let converted = pages.enumerated().map { chapterOffset, list in
+                list.enumerated().map { pageOffset, _ in
+                    "art://\(chapterOffset * 4 + pageOffset + 1)"
+                }
+            }
+            books[index].pageImages = converted
+        }
     }
 
     func save() {
@@ -79,17 +102,138 @@ final class LibraryStore: ObservableObject {
 
     // MARK: - 导入
 
-    /// 导入本地 txt/epub(仅取 txt 部分暂不支持，返回失败) 文件
-    func importBook(from url: URL) {
-        do {
-            let book = try NovelParser.parse(fileURL: url)
-            guard !book.chapters.isEmpty else {
-                lastError = "文件中没有可读内容。"
-                return
+    /// 导入本地 txt 文件（异步解析，不卡界面；无论成败都返回一句可展示的说明）
+    @discardableResult
+    func importBook(from url: URL) async -> LibraryImportOutcome {
+        let accessed = url.startAccessingSecurityScopedResource()
+        let parsed = await Task.detached(priority: .userInitiated) { () -> Result<Book, Error> in
+            do {
+                return .success(try NovelParser.parse(fileURL: url))
+            } catch {
+                return .failure(error)
             }
-            add(book)
-        } catch {
-            lastError = error.localizedDescription
+        }.value
+        if accessed { url.stopAccessingSecurityScopedResource() }
+
+        switch parsed {
+        case .failure(let error):
+            let message = "导入失败：\(error.localizedDescription)"
+            await MainActor.run { self.lastError = message }
+            return LibraryImportOutcome(success: false, message: message, bookID: nil)
+        case .success(let book):
+            return await MainActor.run {
+                guard !book.chapters.isEmpty else {
+                    let message = "文件里没有读到正文内容，换一个文件试试。"
+                    self.lastError = message
+                    return LibraryImportOutcome(success: false, message: message, bookID: nil)
+                }
+                guard !self.books.contains(where: { $0.title == book.title && $0.author == book.author }) else {
+                    return LibraryImportOutcome(
+                        success: false,
+                        message: "《\(book.title)》已经在书架里了。",
+                        bookID: nil
+                    )
+                }
+                self.add(book)
+                return LibraryImportOutcome(
+                    success: true,
+                    message: "已导入《\(book.title)》，共 \(book.chapters.count) 章。",
+                    bookID: book.id
+                )
+            }
+        }
+    }
+
+    /// 从「文件」App 或其他 App 分享进来的文件（自动复制到沙盒后再解析）
+    @discardableResult
+    func handleIncomingFile(_ url: URL) async -> LibraryImportOutcome {
+        guard url.isFileURL else {
+            return LibraryImportOutcome(success: false, message: "不支持的链接类型。", bookID: nil)
+        }
+        return await importBook(from: url)
+    }
+
+    /// 从本地图片生成一本漫画（图片会复制到沙盒并压缩，之后离线可读）
+    @discardableResult
+    func importComic(title: String, imageURLs: [URL]) async -> LibraryImportOutcome {
+        guard !imageURLs.isEmpty else {
+            return LibraryImportOutcome(success: false, message: "没有选中任何图片。", bookID: nil)
+        }
+
+        let folderName = UUID().uuidString
+        let stored = await Task.detached(priority: .userInitiated) { () -> [String] in
+            let manager = FileManager.default
+            guard let documents = manager.urls(for: .documentDirectory, in: .userDomainMask).first else { return [] }
+            let folder = documents.appendingPathComponent("Comics", isDirectory: true)
+                .appendingPathComponent(folderName, isDirectory: true)
+            try? manager.createDirectory(at: folder, withIntermediateDirectories: true)
+
+            var paths: [String] = []
+            var index = 0
+            for url in imageURLs {
+                let accessed = url.startAccessingSecurityScopedResource()
+                let data = try? Data(contentsOf: url)
+                if accessed { url.stopAccessingSecurityScopedResource() }
+                guard let data, let image = UIImage(data: data) else { continue }
+                index += 1
+                let name = String(format: "%03d.jpg", index)
+                let destination = folder.appendingPathComponent(name, isDirectory: false)
+                let scaled = image.resized(maxDimension: 1600)
+                if let jpeg = scaled.jpegData(compressionQuality: 0.85) {
+                    try? jpeg.write(to: destination)
+                    paths.append("local://Comics/\(folderName)/\(name)")
+                }
+            }
+            return paths
+        }.value
+
+        return await MainActor.run {
+            guard !stored.isEmpty else {
+                let message = "这些图片没能读取成功，请确认它们是常见的 JPG / PNG 格式。"
+                self.lastError = message
+                return LibraryImportOutcome(success: false, message: message, bookID: nil)
+            }
+            let name = title.trimmingCharacters(in: .whitespacesAndNewlines)
+            let book = Book(
+                title: name.isEmpty ? "我的漫画" : name,
+                author: "本地导入",
+                intro: "共 \(stored.count) 页，来自本地图片。",
+                category: "漫画",
+                coverTheme: CoverTheme.allCases.randomElement() ?? .teal,
+                chapters: [Chapter(title: "第 1 话", content: "")],
+                kind: .comic,
+                pageImages: [stored]
+            )
+            self.add(book)
+            return LibraryImportOutcome(
+                success: true,
+                message: "已导入《\(book.title)》，共 \(stored.count) 页。",
+                bookID: book.id
+            )
+        }
+    }
+
+    /// 从 .json 文件导入书源
+    func importSourcesFile(from url: URL) async -> String {
+        let accessed = url.startAccessingSecurityScopedResource()
+        let text = await Task.detached(priority: .userInitiated) { () -> String? in
+            if let data = try? Data(contentsOf: url) {
+                return String(data: data, encoding: .utf8)
+            }
+            return nil
+        }.value
+        if accessed { url.stopAccessingSecurityScopedResource() }
+
+        guard let text, !text.isEmpty else {
+            return "没能读取这个文件，确认它是 UTF-8 编码的 .json 文件。"
+        }
+        return await MainActor.run {
+            do {
+                let count = try self.importSourcesJSON(text)
+                return "成功导入 \(count) 个书源。"
+            } catch {
+                return error.localizedDescription
+            }
         }
     }
 
@@ -242,5 +386,18 @@ final class LibraryStore: ObservableObject {
     private static func encode<T: Encodable>(_ value: T, to url: URL) {
         guard let data = try? JSONEncoder().encode(value) else { return }
         try? data.write(to: url, options: .atomic)
+    }
+}
+
+private extension UIImage {
+    /// 等比缩放，限制最长边，避免原图过大撑爆沙盒
+    func resized(maxDimension: CGFloat) -> UIImage {
+        let longest = max(size.width, size.height)
+        guard longest > maxDimension, longest > 0 else { return self }
+        let scale = maxDimension / longest
+        let target = CGSize(width: floor(size.width * scale), height: floor(size.height * scale))
+        return UIGraphicsImageRenderer(size: target).image { _ in
+            self.draw(in: CGRect(origin: .zero, size: target))
+        }
     }
 }

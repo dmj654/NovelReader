@@ -8,8 +8,13 @@ struct ShelfView: View {
     @State private var searchText = ""
     @State private var isGrid = true
     @State private var showImporter = false
-    @State private var showImportTip = false
+    @State private var showImageImporter = false
     @State private var readerBook: Book?
+    @State private var importMessage: String?
+    @State private var isImporting = false
+    @State private var pendingImageURLs: [URL] = []
+    @State private var comicTitle = ""
+    @State private var showComicNamePrompt = false
     /// 书架分区：小说与漫画分开管理
     @State private var section: BookKind = .novel
 
@@ -31,62 +36,7 @@ struct ShelfView: View {
 
     var body: some View {
         NavigationStack {
-            Group {
-                if visibleBooks.isEmpty && searchText.trimmed.isEmpty {
-                    emptyState
-                } else if visibleBooks.isEmpty {
-                    ContentUnavailableView.search(text: searchText)
-                } else {
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 24) {
-                            if let continueBook, searchText.trimmed.isEmpty {
-                                ContinueCard(book: continueBook) {
-                                    readerBook = continueBook
-                                }
-                                .fadeIn()
-                            }
-
-                            VStack(alignment: .leading, spacing: 16) {
-                                SectionHeader(
-                                    title: section == .novel ? "全部藏书" : "全部漫画",
-                                    subtitle: "\(visibleBooks.count) 本",
-                                    isGrid: $isGrid
-                                )
-
-                                if isGrid {
-                                    LazyVGrid(columns: columns, spacing: 20) {
-                                        ForEach(visibleBooks) { book in
-                                            NavigationLink(value: book.id) {
-                                                BookCoverView(book: book, progress: library.progress(for: book.id))
-                                            }
-                                            .buttonStyle(ScaleButtonStyle())
-                                            .contextMenu {
-                                                Button(role: .destructive) {
-                                                    library.remove(book)
-                                                } label: {
-                                                    Label("移出书架", systemImage: "trash")
-                                                }
-                                            }
-                                        }
-                                    }
-                                } else {
-                                    LazyVStack(spacing: 12) {
-                                        ForEach(visibleBooks) { book in
-                                            NavigationLink(value: book.id) {
-                                                BookRowView(book: book, progress: library.progress(for: book.id))
-                                            }
-                                            .buttonStyle(ScaleButtonStyle())
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        .padding(.horizontal, 20)
-                        .padding(.top, 8)
-                        .padding(.bottom, 32)
-                    }
-                }
-            }
+            bookList
             .navigationTitle("书架")
             .searchable(text: $searchText, prompt: section == .comic ? "搜索漫画" : "搜索书名或作者")
             .safeAreaInset(edge: .top, spacing: 0) {
@@ -106,11 +56,15 @@ struct ShelfView: View {
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Button {
-                        showImporter = true
+                        if section == .comic {
+                            showImageImporter = true
+                        } else {
+                            showImporter = true
+                        }
                     } label: {
                         Image(systemName: "plus")
                     }
-                    .accessibilityLabel("导入本地小说")
+                    .accessibilityLabel(section == .comic ? "导入本地图片" : "导入本地小说")
                 }
             }
             .navigationDestination(for: UUID.self) { id in
@@ -120,21 +74,44 @@ struct ShelfView: View {
                     ContentUnavailableView("书籍不存在", systemImage: "book.closed")
                 }
             }
-            .fileImporter(isPresented: $showImporter, allowedContentTypes: [.plainText, .text]) { result in
+            // 小说：TXT 导入（放宽类型，任何文件都能选，解析失败会给明确提示）
+            .fileImporter(isPresented: $showImporter, allowedContentTypes: [.plainText, .text, .data]) { result in
                 switch result {
                 case .success(let url):
-                    library.importBook(from: url)
-                    if library.lastError != nil { showImportTip = true }
+                    Task { await importNovel(from: url) }
                 case .failure(let error):
-                    library.lastError = error.localizedDescription
-                    showImportTip = true
+                    importMessage = error.localizedDescription
                 }
             }
-            .alert("导入失败", isPresented: $showImportTip) {
-                Button("好", role: .cancel) {}
-            } message: {
-                Text(library.lastError ?? "未知错误")
+            // 漫画：多选本地图片
+            .fileImporter(
+                isPresented: $showImageImporter,
+                allowedContentTypes: [.image],
+                allowsMultipleSelection: true
+            ) { result in
+                switch result {
+                case .success(let urls):
+                    guard !urls.isEmpty else { return }
+                    pendingImageURLs = urls
+                    comicTitle = defaultComicTitle
+                    showComicNamePrompt = true
+                case .failure(let error):
+                    importMessage = error.localizedDescription
+                }
             }
+            .alert("给这本漫画起个名字", isPresented: $showComicNamePrompt) {
+                TextField("名称", text: $comicTitle)
+                Button("导入") {
+                    Task { await importComic() }
+                }
+                Button("取消", role: .cancel) {
+                    pendingImageURLs = []
+                }
+            } message: {
+                Text("已选中 \(pendingImageURLs.count) 张图片，按选中顺序排列。")
+            }
+            .toast($importMessage)
+            .busyOverlay(isPresented: isImporting, title: section == .comic ? "正在导入图片…" : "正在解析文件…")
             .fullScreenCover(item: $readerBook) { book in
                 if book.isComic {
                     ComicReaderView(book: book)
@@ -144,6 +121,92 @@ struct ShelfView: View {
             }
         }
     }
+
+    // MARK: - 列表
+
+    @ViewBuilder
+    private var bookList: some View {
+        if visibleBooks.isEmpty && searchText.trimmed.isEmpty {
+            emptyState
+        } else if visibleBooks.isEmpty {
+            ContentUnavailableView.search(text: searchText)
+        } else {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    if let continueBook, searchText.trimmed.isEmpty {
+                        ContinueCard(book: continueBook) {
+                            readerBook = continueBook
+                        }
+                        .fadeIn()
+                    }
+
+                    VStack(alignment: .leading, spacing: 16) {
+                        SectionHeader(
+                            title: section == .novel ? "全部藏书" : "全部漫画",
+                            subtitle: "\(visibleBooks.count) 本",
+                            isGrid: $isGrid
+                        )
+
+                        if isGrid {
+                            LazyVGrid(columns: columns, spacing: 20) {
+                                ForEach(visibleBooks) { book in
+                                    NavigationLink(value: book.id) {
+                                        BookCoverView(book: book, progress: library.progress(for: book.id))
+                                    }
+                                    .buttonStyle(ScaleButtonStyle())
+                                    .contextMenu {
+                                        Button(role: .destructive) {
+                                            library.remove(book)
+                                        } label: {
+                                            Label("移出书架", systemImage: "trash")
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            LazyVStack(spacing: 12) {
+                                ForEach(visibleBooks) { book in
+                                    NavigationLink(value: book.id) {
+                                        BookRowView(book: book, progress: library.progress(for: book.id))
+                                    }
+                                    .buttonStyle(ScaleButtonStyle())
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 8)
+                .padding(.bottom, 32)
+            }
+        }
+    }
+
+    // MARK: - 导入动作
+
+    private func importNovel(from url: URL) async {
+        isImporting = true
+        let outcome = await library.importBook(from: url)
+        isImporting = false
+        importMessage = outcome.message
+    }
+
+    private func importComic() async {
+        let urls = pendingImageURLs
+        pendingImageURLs = []
+        isImporting = true
+        let outcome = await library.importComic(title: comicTitle, imageURLs: urls)
+        isImporting = false
+        importMessage = outcome.message
+    }
+
+    private var defaultComicTitle: String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MM-dd HH:mm"
+        return "我的漫画 \(formatter.string(from: Date()))"
+    }
+
+    // MARK: - 空状态
 
     private var emptyState: some View {
         VStack(spacing: 20) {
@@ -156,21 +219,30 @@ struct ShelfView: View {
                 Text(section == .comic ? "还没有漫画" : "书架还是空的")
                     .font(.headline)
                 Text(section == .comic
-                     ? "到「发现 → 书源搜索」添加漫画，或等后续版本支持本地导入。"
+                     ? "点下面的按钮，从相册或「文件」里选一组图片，就能当漫画看。"
                      : "内置示例已就绪，也可以导入本地 TXT 小说。")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
             }
-            if section == .novel {
-                Button {
+
+            Button {
+                if section == .comic {
+                    showImageImporter = true
+                } else {
                     showImporter = true
-                } label: {
-                    Label("导入 TXT", systemImage: "square.and.arrow.down")
-                        .font(.subheadline.weight(.semibold))
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
+            } label: {
+                Label(section == .comic ? "导入图片" : "导入 TXT", systemImage: "square.and.arrow.down")
+                    .font(.subheadline.weight(.semibold))
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+
+            if section == .novel {
+                Text("也可以直接在「文件」App 里长按 txt → 分享 → 阅栈")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
             }
             Spacer(minLength: 0)
         }

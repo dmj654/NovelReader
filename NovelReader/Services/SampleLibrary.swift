@@ -4,12 +4,16 @@ import Foundation
 enum SampleLibrary {
     static var books: [Book] { [xinghai, jiuxiang, changye, comicDemo] }
 
-    /// 内置示例书源：仅示范 JSON 格式，站点不可用，导入真实书源后请删除或禁用。
-    static var bookSources: [BookSource] { [demoSource] }
+    /// 内置示例书源：示范 JSON / 正则规则长什么样。
+    /// 站点地址是 example.com，搜不到东西属正常——把它改成你自己的站点即可使用。
+    static var bookSources: [BookSource] { [demoNovelSource, demoComicSource] }
 
-    private static let demoSource = BookSource(
-        id: "demo-source",
-        name: "示例书源（不可用）",
+    /// 供「添加示例书源」按钮使用：任何时候都能再写回来一份
+    static var sampleSources: [BookSource] { [demoNovelSource, demoComicSource] }
+
+    private static let demoNovelSource = BookSource(
+        id: "demo-novel",
+        name: "示例·小说源（改为你的站点）",
         baseURL: "https://www.example.com",
         searchTemplate: "https://www.example.com/search?q={query}&page={page}",
         isComic: false,
@@ -23,11 +27,27 @@ enum SampleLibrary {
         )
     )
 
-    /// 示例漫画：图片来自 picsum.photos 公共占位服务，联网时可见
+    private static let demoComicSource = BookSource(
+        id: "demo-comic",
+        name: "示例·漫画源（改为你的站点）",
+        baseURL: "https://www.example.com",
+        searchTemplate: "https://www.example.com/search?q={query}&page={page}",
+        isComic: true,
+        isEnabled: false,
+        sortOrder: 1,
+        rules: SourceRules(
+            listPattern: #"<a[^>]+href="([^"]+)"[^>]*>\s*([^<]{1,40})\s*</a>"#,
+            titleGroup: 2,
+            linkGroup: 1,
+            imagePattern: #"<img[^>]+src="([^"]+\.(?:jpg|jpeg|png|webp|gif))[^"]*""#
+        )
+    )
+
+    /// 示例漫画：画面由 App 本地绘制，不联网也能翻，用于体验漫画阅读器与分区管理
     private static let comicDemo = Book(
         title: "云上小镇",
         author: "示例漫画",
-        intro: "内置漫画示例：三话占位画面，用于体验漫画阅读器与分区管理。",
+        intro: "内置漫画示例：三话共 12 页，用于体验漫画阅读器与分区管理。想看自己的漫画，到书架右上角 ＋ 导入图片即可。",
         category: "漫画",
         coverTheme: .teal,
         chapters: [
@@ -41,8 +61,8 @@ enum SampleLibrary {
 
     private static let comicPages: [[String]] = {
         (1...3).map { chapter in
-            (1...5).map { page in
-                "https://picsum.photos/seed/yunzhensiao-\(chapter)-\(page)/800/1200"
+            (1...4).map { page in
+                "art://\((chapter - 1) * 4 + page)"
             }
         }
     }()

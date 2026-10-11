@@ -54,13 +54,14 @@ enum ReaderTheme: String, Codable, CaseIterable, Identifiable {
 // MARK: - 翻页方式
 
 enum PageTurnMode: String, Codable, CaseIterable, Identifiable {
-    case curl, scroll
+    case curl, horizontal, scroll
 
     var id: String { rawValue }
 
     var displayName: String {
         switch self {
         case .curl: return "仿真翻页"
+        case .horizontal: return "左右滑动"
         case .scroll: return "上下滚动"
         }
     }
@@ -68,6 +69,7 @@ enum PageTurnMode: String, Codable, CaseIterable, Identifiable {
     var systemImage: String {
         switch self {
         case .curl: return "book"
+        case .horizontal: return "arrow.left.and.line.vertical.and.arrow.right"
         case .scroll: return "arrow.up.arrow.down"
         }
     }
@@ -103,6 +105,18 @@ struct ReaderFontOption: Identifiable, Hashable {
     }
 }
 
+// MARK: - 页面几何
+
+/// 阅读页的几何常量：分页端与渲染端必须共用同一套数值，否则会出现截断或大片空白。
+enum ReaderLayout {
+    /// 正文左右边距
+    static let defaultHorizontalPadding: CGFloat = 20
+    /// 页眉（章节名）高度
+    static let headerHeight: CGFloat = 40
+    /// 页脚（页码 / 时间 / 电量）高度
+    static let footerHeight: CGFloat = 30
+}
+
 // MARK: - 设置持久化
 
 final class ReadingSettingsStore: ObservableObject {
@@ -110,6 +124,8 @@ final class ReadingSettingsStore: ObservableObject {
         static let fontSize = "reader.fontSize"
         static let lineSpacing = "reader.lineSpacing"
         static let paragraphSpacing = "reader.paragraphSpacing"
+        static let horizontalPadding = "reader.horizontalPadding"
+        static let paragraphIndent = "reader.paragraphIndent"
         static let theme = "reader.theme"
         static let mode = "reader.mode"
         static let fontName = "reader.fontName"
@@ -130,6 +146,13 @@ final class ReadingSettingsStore: ObservableObject {
     }
     @Published var paragraphSpacing: CGFloat {
         didSet { defaults.set(Double(paragraphSpacing), forKey: Key.paragraphSpacing) }
+    }
+    @Published var horizontalPadding: CGFloat {
+        didSet { defaults.set(Double(horizontalPadding), forKey: Key.horizontalPadding) }
+    }
+    /// 段首缩进两个字符（关闭时靠段间距区分段落）
+    @Published var paragraphIndent: Bool {
+        didSet { defaults.set(paragraphIndent, forKey: Key.paragraphIndent) }
     }
     @Published var theme: ReaderTheme {
         didSet { defaults.set(theme.rawValue, forKey: Key.theme) }
@@ -159,13 +182,14 @@ final class ReadingSettingsStore: ObservableObject {
         didSet { defaults.set(Double(speechPitch), forKey: Key.speechPitch) }
     }
 
-    /// 每次影响分页的参数变化都会让签名改变，用于触发重新分页并清空页面缓存
+    /// 每次影响分页的参数变化都会让签名改变，用于触发重新分页
     var layoutSignature: String {
         [
             String(format: "%.1f", fontSize),
             String(format: "%.2f", lineSpacing),
             String(format: "%.2f", paragraphSpacing),
             fontOption.id,
+            paragraphIndent ? "indent" : "flat",
             theme.rawValue
         ].joined(separator: "|")
     }
@@ -174,8 +198,10 @@ final class ReadingSettingsStore: ObservableObject {
         self.defaults = defaults
         defaults.register(defaults: [
             Key.fontSize: 18.0,
-            Key.lineSpacing: 6.0,
-            Key.paragraphSpacing: 10.0,
+            Key.lineSpacing: 9.0,
+            Key.paragraphSpacing: 12.0,
+            Key.horizontalPadding: 20.0,
+            Key.paragraphIndent: true,
             Key.theme: ReaderTheme.paper.rawValue,
             Key.mode: PageTurnMode.curl.rawValue,
             Key.fontName: "PingFang SC",
@@ -189,6 +215,9 @@ final class ReadingSettingsStore: ObservableObject {
         self.fontSize = CGFloat(defaults.double(forKey: Key.fontSize))
         self.lineSpacing = CGFloat(defaults.double(forKey: Key.lineSpacing))
         self.paragraphSpacing = CGFloat(defaults.double(forKey: Key.paragraphSpacing))
+        let savedPadding = defaults.object(forKey: Key.horizontalPadding) as? Double ?? 20.0
+        self.horizontalPadding = CGFloat(savedPadding)
+        self.paragraphIndent = defaults.object(forKey: Key.paragraphIndent) as? Bool ?? true
         self.theme = ReaderTheme(rawValue: defaults.string(forKey: Key.theme) ?? "") ?? .paper
         self.pageTurnMode = PageTurnMode(rawValue: defaults.string(forKey: Key.mode) ?? "") ?? .curl
         let savedFont = defaults.string(forKey: Key.fontName) ?? "PingFang SC"
@@ -201,6 +230,20 @@ final class ReadingSettingsStore: ObservableObject {
         self.speechRate = Float(savedRate)
         let savedPitch = defaults.object(forKey: Key.speechPitch) as? Double ?? 1.0
         self.speechPitch = Float(savedPitch)
+    }
+
+    /// 恢复默认排版（不清空书源与书架）
+    func resetToDefaults() {
+        fontSize = 18
+        lineSpacing = 9
+        paragraphSpacing = 12
+        horizontalPadding = ReaderLayout.defaultHorizontalPadding
+        paragraphIndent = true
+        theme = .paper
+        pageTurnMode = .curl
+        brightness = 1.0
+        keepScreenAwake = true
+        showPageFooter = true
     }
 
     // MARK: 排版
@@ -217,12 +260,17 @@ final class ReadingSettingsStore: ObservableObject {
         paragraph.alignment = .justified
         paragraph.lineBreakMode = .byWordWrapping
         paragraph.firstLineHeadIndent = 0
-        paragraph.hyphenationFactor = 0.6
+        paragraph.hyphenationFactor = 0
 
         return [
             .font: scaled,
             .paragraphStyle: paragraph,
             .foregroundColor: UIColor(named: theme.textAsset) ?? .label
         ]
+    }
+
+    /// 段首缩进量：两个字符宽；关闭缩进时为 0
+    var paragraphIndentWidth: CGFloat {
+        paragraphIndent ? fontSize * 2 : 0
     }
 }

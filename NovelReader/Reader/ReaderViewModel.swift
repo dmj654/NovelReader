@@ -12,12 +12,17 @@ final class ReaderViewModel: ObservableObject {
     @Published private(set) var book: Book
     @Published var pages: [ReaderPage] = []
     @Published var currentIndex: Int = 0
+    @Published var isPaginating: Bool = true
     @Published var isChromeVisible: Bool = false
     @Published var activeChapterIndex: Int = 0
 
     private var pageSize: CGSize = .zero
     private var layoutSignature: String = ""
-    private var isRestoring = false
+    private var paginationTask: Task<Void, Never>?
+    private var didRestore = false
+
+    /// 正文区高度：渲染端必须与分页端使用同一个值
+    var bodyHeight: CGFloat { max(pageSize.height, 1) }
 
     var currentPage: ReaderPage? {
         pages.indices.contains(currentIndex) ? pages[currentIndex] : nil
@@ -54,6 +59,7 @@ final class ReaderViewModel: ObservableObject {
 
     func onDisappear() {
         persist()
+        paginationTask?.cancel()
         UIApplication.shared.isIdleTimerDisabled = false
     }
 
@@ -65,37 +71,56 @@ final class ReaderViewModel: ObservableObject {
 
     // MARK: - 分页
 
-    /// 页面尺寸变化时重新分页；排版参数变化会强制重排并尽量保持阅读位置
+    /// 页面尺寸变化时重新分页；排版参数变化会强制重排并尽量保持阅读位置。
+    /// 分页在后台按章并发执行，大部头图书也能秒开。
     func updatePageSize(_ size: CGSize) {
         guard size.width > 0, size.height > 0 else { return }
         let signature = settings.layoutSignature
-        let sizeChanged = !size.width.isEqual(to: pageSize.width) || !size.height.isEqual(to: pageSize.height)
+        let sizeChanged = abs(size.width - pageSize.width) > 0.5 || abs(size.height - pageSize.height) > 0.5
         let layoutChanged = signature != layoutSignature
 
         guard pages.isEmpty || sizeChanged || layoutChanged else { return }
 
-        let previousChapter = currentPage?.chapterIndex ?? library.progress(for: bookID).chapterIndex
-        let previousPageInChapter = currentPage?.pageIndexInChapter ?? library.progress(for: bookID).pageIndex
-
         pageSize = size
         layoutSignature = signature
-        pages = ChapterPaginator.buildPages(book: book, settings: settings, pageSize: size)
 
-        if isRestoring {
-            restore(toChapter: previousChapter, pageInChapter: previousPageInChapter)
-        } else {
-            let saved = library.progress(for: bookID)
-            restore(toChapter: saved.chapterIndex, pageInChapter: saved.pageIndex)
-            isRestoring = true
+        let targetChapter = currentPage?.chapterIndex ?? library.progress(for: bookID).chapterIndex
+        let targetPageInChapter = currentPage?.pageIndexInChapter ?? library.progress(for: bookID).pageIndex
+
+        paginationTask?.cancel()
+        isPaginating = true
+
+        let chapters = book.chapters.map { ChapterInput(title: $0.title, content: $0.content) }
+        let attributes = settings.bodyAttributes()
+        let indent = settings.paragraphIndentWidth
+        let targetSize = size
+
+        paginationTask = Task { [weak self] in
+            let result = await ChapterPaginator.buildPages(
+                chapters: chapters,
+                attributes: attributes,
+                indent: indent,
+                pageSize: targetSize
+            )
+            guard !Task.isCancelled else { return }
+            guard let self else { return }
+            self.pages = result
+            self.isPaginating = false
+            if self.didRestore {
+                self.restore(toChapter: targetChapter, pageInChapter: targetPageInChapter)
+            } else {
+                let saved = self.library.progress(for: self.bookID)
+                self.restore(toChapter: saved.chapterIndex, pageInChapter: saved.pageIndex)
+                self.didRestore = true
+            }
         }
     }
 
     func invalidateLayout() {
         guard pageSize != .zero else { return }
-        let chapter = currentPage?.chapterIndex ?? 0
-        let pageInChapter = currentPage?.pageIndexInChapter ?? 0
-        pages = ChapterPaginator.buildPages(book: book, settings: settings, pageSize: pageSize)
-        restore(toChapter: chapter, pageInChapter: pageInChapter)
+        // 清空签名强制重排（尺寸没变也要重算）
+        layoutSignature = ""
+        updatePageSize(pageSize)
     }
 
     // MARK: - 定位

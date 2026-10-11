@@ -19,6 +19,11 @@ struct NovelReaderApp: App {
                         library.save()
                     }
                 }
+                // 从「文件」App 或其他 App 分享 TXT 到阅栈
+                .onOpenURL { url in
+                    guard url.isFileURL else { return }
+                    Task { await library.handleIncomingFile(url) }
+                }
         }
     }
 }

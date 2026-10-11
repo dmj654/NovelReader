@@ -32,7 +32,7 @@ enum SourceEngine {
 
     // MARK: - 网络
 
-    static func fetchHTML(urlString: String) async throws -> String {
+    static func fetchHTML(urlString: String, referer: String? = nil) async throws -> String {
         guard let url = URL(string: urlString), url.scheme != nil else {
             throw SourceError.badURL
         }
@@ -42,6 +42,9 @@ enum SourceEngine {
             "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15",
             forHTTPHeaderField: "User-Agent"
         )
+        if let referer, !referer.isEmpty {
+            request.setValue(referer, forHTTPHeaderField: "Referer")
+        }
         let (data, response) = try await URLSession.shared.data(for: request)
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
             throw SourceError.httpStatus(http.statusCode)
@@ -68,7 +71,7 @@ enum SourceEngine {
     }
 
     static func search(source: BookSource, query: String, page: Int = 1) async throws -> [SearchResult] {
-        let html = try await fetchHTML(urlString: searchURL(source: source, query: query, page: page))
+        let html = try await fetchHTML(urlString: searchURL(source: source, query: query, page: page), referer: source.baseURL)
         let results = extractLinks(
             html: html,
             pattern: source.rules.listPattern,
@@ -125,7 +128,7 @@ enum SourceEngine {
 
     /// 小说正文：优先 contentPattern 捕获组，否则整页去标签
     static func fetchChapterText(source: BookSource, link: String) async throws -> String {
-        let html = try await fetchHTML(urlString: link)
+        let html = try await fetchHTML(urlString: link, referer: source.baseURL)
         var text = ""
         if let pattern = source.rules.contentPattern, !pattern.isEmpty,
            let regex = try? NSRegularExpression(pattern: pattern, options: [.dotMatchesLineSeparators]) {
@@ -143,7 +146,7 @@ enum SourceEngine {
 
     /// 漫画：章节页里的图片 URL 列表
     static func fetchImageURLs(source: BookSource, link: String) async throws -> [String] {
-        let html = try await fetchHTML(urlString: link)
+        let html = try await fetchHTML(urlString: link, referer: source.baseURL)
         let pattern = source.rules.imagePattern ?? #"<img[^>]+src=\"([^\"]+\.(?:jpg|jpeg|png|webp|gif))[^\"]*\""#
         guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
             throw SourceError.badRule
@@ -160,6 +163,41 @@ enum SourceEngine {
         }
         guard !urls.isEmpty else { throw SourceError.emptyResult }
         return urls
+    }
+
+    // MARK: - 诊断
+
+    /// 把各类错误翻译成一句"人能看懂、知道下一步做什么"的话
+    static func readableMessage(_ error: Error) -> String {
+        if let sourceError = error as? SourceError {
+            switch sourceError {
+            case .badURL: return "地址格式不对，检查书源的站点地址与搜索地址是否以 http(s):// 开头。"
+            case .badRule: return "书源规则不是合法正则表达式，去书源管理里改一下。"
+            case .httpStatus(let code): return "站点返回状态码 \(code)。可能被反爬或被重定向，换一个书源试试。"
+            case .emptyResult: return "页面能打开，但正则没匹配到内容——需要在书源管理里调整『结果列表正则』的捕获组。"
+            }
+        }
+        if let urlError = error as? URLError {
+            switch urlError.code {
+            case .timedOut: return "连接超时。这个站点在当前网络下可能访问不了。"
+            case .notConnectedToInternet: return "手机当前没有联网。"
+            case .cannotFindHost, .cannotConnectToHost: return "连不上这个站点，检查站点地址是否正确。"
+            case .badServerResponse: return "站点返回了异常响应。"
+            case .cancelled: return "请求被取消。"
+            default: return "网络错误：\(urlError.localizedDescription)"
+            }
+        }
+        return error.localizedDescription
+    }
+
+    /// 校验书源并返回可读结论
+    static func diagnose(_ source: BookSource) async -> String {
+        do {
+            let found = try await search(source: source, query: "的", page: 1)
+            return found.isEmpty ? "能连上，但没解析到结果，检查正则捕获组。" : "可用，解析到 \(found.count) 条结果。"
+        } catch {
+            return readableMessage(error)
+        }
     }
 
     // MARK: - 工具

@@ -32,10 +32,31 @@ targets:
           - "**/*.md"
     resources:
       - path: NovelReader/Resources/Assets.xcassets
+    info:
+      # 让「文件」App 与其他 App 可以把 TXT / JSON 分享到阅栈打开
+      CFBundleDocumentTypes:
+        - CFBundleTypeName: "Text Document"
+          CFBundleTypeRole: Viewer
+          LSHandlerRank: Alternate
+          LSItemContentTypes:
+            - public.plain-text
+            - public.text
+            - public.data
+        - CFBundleTypeName: "JSON Source"
+          CFBundleTypeRole: Viewer
+          LSHandlerRank: Alternate
+          LSItemContentTypes:
+            - public.json
+      # 书源站点良莠不齐，允许 http 以免整站抓不下来
+      NSAppTransportSecurity:
+        NSAllowsArbitraryLoads: true
     settings:
       base:
         PRODUCT_NAME: 阅栈
         PRODUCT_BUNDLE_IDENTIFIER: com.novelreader.app
+        # 版本号：装到手机后，在「我的 → 版本」能看到，用来确认装的是不是最新版
+        MARKETING_VERSION: "1.1.0"
+        CURRENT_PROJECT_VERSION: "2"
         TARGETED_DEVICE_FAMILY: "1,2"
         GENERATE_INFOPLIST_FILE: "YES"
         # iOS 17 起可用生成的启动屏，无需 LaunchScreen.storyboard

@@ -32,14 +32,17 @@ struct ReaderView: View {
                 Color(uiColor: backgroundColor)
                     .ignoresSafeArea()
 
-                content(in: proxy.size)
+                content
 
-                chrome(size: proxy.size)
+                chrome
             }
-            .onChange(of: proxy.size) { _, newSize in
-                viewModel.updatePageSize(pageBodySize(for: newSize))
+            .onChange(of: proxy.size) { _, _ in
+                viewModel.updatePageSize(pageBodySize(for: proxy.size, insets: proxy.safeAreaInsets))
             }
             .onChange(of: settings.layoutSignature) { _, _ in
+                viewModel.invalidateLayout()
+            }
+            .onChange(of: settings.horizontalPadding) { _, _ in
                 viewModel.invalidateLayout()
             }
             .onChange(of: viewModel.currentIndex) { _, _ in
@@ -54,7 +57,7 @@ struct ReaderView: View {
             }
             .task {
                 viewModel.onAppear()
-                viewModel.updatePageSize(pageBodySize(for: proxy.size))
+                viewModel.updatePageSize(pageBodySize(for: proxy.size, insets: proxy.safeAreaInsets))
             }
             .task(id: viewModel.activeChapterIndex) {
                 // 书源书：进入章节时按需抓取正文
@@ -109,32 +112,40 @@ struct ReaderView: View {
     // MARK: - 正文
 
     @ViewBuilder
-    private func content(in size: CGSize) -> some View {
-        switch settings.pageTurnMode {
-        case .curl:
-            if viewModel.pages.isEmpty {
-                ReadingSkeleton()
-            } else {
-                PagedReader(
-                    pages: viewModel.pages,
-                    backgroundColor: backgroundColor,
-                    currentIndex: Binding(
-                        get: { viewModel.currentIndex },
-                        set: { viewModel.jump(toGlobal: $0) }
-                    ),
-                    highlightFor: { pageIndex in
-                        speechHighlightRange(forPageAt: pageIndex)
-                    }
-                )
-                .ignoresSafeArea(edges: .bottom)
-                .overlay {
-                    pageTapRegions
-                }
+    private var content: some View {
+        if viewModel.pages.isEmpty {
+            ReadingSkeleton()
+        } else {
+            switch settings.pageTurnMode {
+            case .curl:
+                pagedReader(style: .pageCurl)
+            case .horizontal:
+                pagedReader(style: .scroll)
+            case .scroll:
+                ScrollReaderView(viewModel: viewModel, backgroundColor: backgroundColor)
+                    .contentShape(Rectangle())
+                    .onTapGesture { viewModel.toggleChrome() }
             }
-        case .scroll:
-            ScrollReaderView(viewModel: viewModel, backgroundColor: backgroundColor)
-                .contentShape(Rectangle())
-                .onTapGesture { viewModel.toggleChrome() }
+        }
+    }
+
+    private func pagedReader(style: UIPageViewController.TransitionStyle) -> some View {
+        PagedReader(
+            pages: viewModel.pages,
+            backgroundColor: backgroundColor,
+            transitionStyle: style,
+            bodyHeight: viewModel.bodyHeight,
+            horizontalPadding: settings.horizontalPadding,
+            currentIndex: Binding(
+                get: { viewModel.currentIndex },
+                set: { viewModel.jump(toGlobal: $0) }
+            ),
+            highlightFor: { pageIndex in
+                speechHighlightRange(forPageAt: pageIndex)
+            }
+        )
+        .overlay {
+            pageTapRegions
         }
     }
 
@@ -170,10 +181,14 @@ struct ReaderView: View {
         }
     }
 
-    /// 页面正文可用尺寸：左右各留 24pt，上下预留页眉页脚
-    private func pageBodySize(for size: CGSize) -> CGSize {
-        let width = max(size.width - 48, 1)
-        let height = max(size.height - 96, 1)
+    /// 正文可用尺寸：左右边距 + 上下页眉页脚与安全区都已扣除，
+    /// 与 ReaderPageContainer 里的实际布局严格一致。
+    private func pageBodySize(for size: CGSize, insets: EdgeInsets) -> CGSize {
+        let width = max(size.width - settings.horizontalPadding * 2, 1)
+        let height = max(
+            size.height - insets.top - insets.bottom - ReaderLayout.headerHeight - ReaderLayout.footerHeight,
+            1
+        )
         return CGSize(width: width, height: height)
     }
 
@@ -241,7 +256,7 @@ struct ReaderView: View {
     // MARK: - 浮层工具条
 
     @ViewBuilder
-    private func chrome(size: CGSize) -> some View {
+    private var chrome: some View {
         if viewModel.isChromeVisible {
             VStack(spacing: 0) {
                 topBar
@@ -526,14 +541,11 @@ private struct ScrollReaderView: View {
                             .font(.title3.weight(.semibold))
                             .foregroundStyle(Color(uiColor: UIColor(named: settings.theme.textAsset) ?? .label))
 
-                        ChapterScrollTextView(
-                            attributedText: attributed(chapter.content),
-                            backgroundColor: .clear
-                        )
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        ChapterScrollTextView(attributedText: attributed(chapter.content))
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .id(chapter.id)
-                    .padding(.horizontal, 24)
+                    .padding(.horizontal, settings.horizontalPadding)
                     .padding(.top, index == 0 ? 24 : 0)
                     .onAppear { syncProgress(for: index) }
                 }
@@ -550,7 +562,15 @@ private struct ScrollReaderView: View {
     }
 
     private func attributed(_ text: String) -> NSAttributedString {
-        NSAttributedString(string: text, attributes: settings.bodyAttributes())
+        let attributes = settings.bodyAttributes()
+        let body = NSMutableAttributedString(string: text, attributes: attributes)
+        let indentStyle = NSMutableParagraphStyle()
+        if let base = attributes[.paragraphStyle] as? NSParagraphStyle {
+            indentStyle.setParagraphStyle(base)
+        }
+        indentStyle.firstLineHeadIndent = settings.paragraphIndentWidth
+        body.addAttribute(.paragraphStyle, value: indentStyle, range: NSRange(location: 0, length: body.length))
+        return body
     }
 
     private func syncProgress(for chapterIndex: Int) {
@@ -562,8 +582,6 @@ private struct ScrollReaderView: View {
 // MARK: - 骨架屏（不使用全屏 spinner）
 
 private struct ReadingSkeleton: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             ForEach(0..<12, id: \.self) { index in

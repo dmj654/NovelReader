@@ -9,6 +9,7 @@ struct MeView: View {
     @State private var showSettings = false
     @State private var showResetConfirm = false
     @State private var toast: String?
+    @State private var isImporting = false
 
     private var totalWords: Int { library.books.reduce(0) { $0 + $1.wordCount } }
     private var finishedCount: Int { library.books.filter(\.isFinished).count }
@@ -92,9 +93,11 @@ struct MeView: View {
                     HStack {
                         Text("版本")
                         Spacer(minLength: 8)
-                        Text("1.0.0")
+                        Text(AppVersion.display)
                             .foregroundStyle(.secondary)
+                            .monospacedDigit()
                     }
+                    .accessibilityLabel("版本 \(AppVersion.display)")
                     NavigationLink {
                         PrivacyView()
                     } label: {
@@ -103,16 +106,15 @@ struct MeView: View {
                 }
             }
             .navigationTitle("我的")
-            .fileImporter(isPresented: $showImporter, allowedContentTypes: [.plainText, .text]) { result in
+            .fileImporter(isPresented: $showImporter, allowedContentTypes: [.plainText, .text, .data]) { result in
                 switch result {
                 case .success(let url):
-                    let before = library.books.count
-                    library.importBook(from: url)
-                    toast = library.books.count > before ? "导入成功" : (library.lastError ?? "导入失败")
+                    Task { await importNovel(from: url) }
                 case .failure(let error):
                     toast = error.localizedDescription
                 }
             }
+            .toast($toast)
             .sheet(isPresented: $showSettings) {
                 ReaderSettingsSheet()
                     .environmentObject(settings)
@@ -128,24 +130,27 @@ struct MeView: View {
             } message: {
                 Text("书籍与全部阅读进度将被删除，此操作不可撤销。")
             }
-            .overlay(alignment: .bottom) {
-                if let message = toast {
-                    Text(message)
-                        .font(.subheadline)
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 12)
-                        .background(.regularMaterial, in: Capsule())
-                        .padding(.bottom, 24)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                        .task {
-                            try? await Task.sleep(nanoseconds: 1_800_000_000)
-                            // 注意：赋值给外层 @State 变量，而不是 if let 解包出的常量
-                            toast = nil
-                        }
-                }
-            }
-            .animation(.easeInOut, value: toast)
+            .busyOverlay(isPresented: isImporting, title: "正在解析文件…")
         }
+    }
+
+    // MARK: - 导入
+
+    private func importNovel(from url: URL) async {
+        isImporting = true
+        let outcome = await library.importBook(from: url)
+        isImporting = false
+        toast = outcome.message
+    }
+}
+
+/// 从 Info.plist 读版本号，用来确认手机上装的是不是最新的包
+private enum AppVersion {
+    static var display: String {
+        let info = Bundle.main.infoDictionary
+        let short = info?["CFBundleShortVersionString"] as? String ?? "1.1.0"
+        let build = info?["CFBundleVersion"] as? String ?? "1"
+        return "\(short)（构建 \(build)）"
     }
 }
 

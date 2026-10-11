@@ -1,10 +1,15 @@
 import SwiftUI
 import UIKit
 
-/// UIPageViewController 的 SwiftUI 封装，用于仿真翻页（.pageCurl）。
+/// UIPageViewController 的 SwiftUI 封装：仿真翻页（.pageCurl）或左右滑动（.scroll）。
 struct PagedReader: UIViewControllerRepresentable {
     let pages: [ReaderPage]
     let backgroundColor: UIColor
+    let transitionStyle: UIPageViewController.TransitionStyle
+    /// 正文区高度：与分页时使用的高度一致，保证渲染不截断、不留大片空白
+    let bodyHeight: CGFloat
+    /// 正文左右边距：同样要与分页端一致
+    let horizontalPadding: CGFloat
     @Binding var currentIndex: Int
     /// 听书跟读：返回某页需要高亮的页内区间（nil = 不高亮）
     var highlightFor: (Int) -> NSRange? = { _ in nil }
@@ -16,10 +21,10 @@ struct PagedReader: UIViewControllerRepresentable {
     func makeUIViewController(context: Context) -> UIPageViewController {
         let options: [UIPageViewController.OptionsKey: Any] = [
             .spineLocation: UIPageViewController.SpineLocation.min.rawValue,
-            .interPageSpacing: 0
+            .interPageSpacing: transitionStyle == .scroll ? 8 : 0
         ]
         let controller = UIPageViewController(
-            transitionStyle: .pageCurl,
+            transitionStyle: transitionStyle,
             navigationOrientation: .horizontal,
             options: options
         )
@@ -53,15 +58,17 @@ struct PagedReader: UIViewControllerRepresentable {
         var parent: PagedReader
         private var cache: [Int: UIHostingController<ReaderPageContainer>] = [:]
         private var cachedCount: Int = -1
+        private var cachedBodyHeight: CGFloat = -1
 
         init(_ parent: PagedReader) {
             self.parent = parent
         }
 
         func invalidateCacheIfNeeded() {
-            if cachedCount != parent.pages.count {
+            if cachedCount != parent.pages.count || cachedBodyHeight != parent.bodyHeight {
                 cache.removeAll()
                 cachedCount = parent.pages.count
+                cachedBodyHeight = parent.bodyHeight
             }
         }
 
@@ -72,6 +79,8 @@ struct PagedReader: UIViewControllerRepresentable {
                 host.rootView = ReaderPageContainer(
                     page: page,
                     backgroundColor: parent.backgroundColor,
+                    bodyHeight: parent.bodyHeight,
+                    horizontalPadding: parent.horizontalPadding,
                     highlightRange: parent.highlightFor(index)
                 )
             }
@@ -80,12 +89,21 @@ struct PagedReader: UIViewControllerRepresentable {
         func controller(at index: Int) -> UIViewController {
             if let cached = cache[index] { return cached }
             guard parent.pages.indices.contains(index) else {
-                return UIHostingController(rootView: ReaderPageContainer(page: nil, backgroundColor: parent.backgroundColor))
+                return UIHostingController(
+                    rootView: ReaderPageContainer(
+                        page: nil,
+                        backgroundColor: parent.backgroundColor,
+                        bodyHeight: parent.bodyHeight,
+                        horizontalPadding: parent.horizontalPadding
+                    )
+                )
             }
             let host = UIHostingController(
                 rootView: ReaderPageContainer(
                     page: parent.pages[index],
                     backgroundColor: parent.backgroundColor,
+                    bodyHeight: parent.bodyHeight,
+                    horizontalPadding: parent.horizontalPadding,
                     highlightRange: parent.highlightFor(index)
                 )
             )
@@ -128,10 +146,12 @@ struct PagedReader: UIViewControllerRepresentable {
     }
 }
 
-/// 页面容器：正文 + 页眉章节名 + 页脚页码
+/// 页面容器：页眉章节名 + 固定高度正文 + 页脚页码（高度与分页端完全对齐）
 struct ReaderPageContainer: View {
     let page: ReaderPage?
     let backgroundColor: UIColor
+    let bodyHeight: CGFloat
+    let horizontalPadding: CGFloat
     var highlightRange: NSRange? = nil
 
     var body: some View {
@@ -139,40 +159,77 @@ struct ReaderPageContainer: View {
             .overlay(alignment: .top) {
                 if let page {
                     VStack(spacing: 0) {
-                        HStack {
-                            Text(page.chapterTitle)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Spacer(minLength: 8)
-                        }
-                        .padding(.horizontal, 24)
-                        .padding(.top, 16)
-                        .padding(.bottom, 8)
-                        .accessibilityHidden(true)
+                        pageHeader(page)
+                            .frame(height: ReaderLayout.headerHeight)
 
                         ReaderPageView(
                             attributedText: page.attributedText,
                             backgroundColor: backgroundColor,
                             highlightRange: highlightRange
                         )
-                        .padding(.horizontal, 24)
+                        // 左右边距必须和分页时扣掉的宽度完全一致，否则行宽不同、页面底部会留白
+                        .padding(.horizontal, horizontalPadding)
+                        .frame(height: max(bodyHeight, 1))
+                        .clipped()
 
                         Spacer(minLength: 0)
 
-                        HStack {
-                            Spacer(minLength: 8)
-                            Text("\(page.globalIndex + 1) / \(page.totalPages)")
-                                .font(.caption2.monospacedDigit())
-                                .foregroundStyle(.secondary)
-                        }
-                        .padding(.horizontal, 24)
-                        .padding(.bottom, 16)
-                        .accessibilityHidden(true)
+                        pageFooter(page)
+                            .frame(height: ReaderLayout.footerHeight)
                     }
                     .accessibilityElement(children: .combine)
                     .accessibilityLabel("第 \(page.globalIndex + 1) 页，共 \(page.totalPages) 页")
                 }
             }
-            .ignoresSafeArea(edges: .bottom)
+    }
+
+    private func pageHeader(_ page: ReaderPage) -> some View {
+        HStack {
+            Text(page.chapterTitle)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            Spacer(minLength: 8)
+        }
+        .padding(.horizontal, horizontalPadding)
+        .accessibilityHidden(true)
+    }
+
+    private func pageFooter(_ page: ReaderPage) -> some View {
+        HStack(spacing: 12) {
+            Text("\(page.pageIndexInChapter + 1) / \(page.pagesInChapter)")
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(.tertiary)
+            Spacer(minLength: 8)
+            ReaderStatusText()
+            Spacer(minLength: 8)
+            Text("\(page.globalIndex + 1) / \(page.totalPages)")
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, horizontalPadding)
+        .accessibilityHidden(true)
+    }
+}
+
+/// 页脚的时间与电量（每 30 秒刷新一次）
+private struct ReaderStatusText: View {
+    @State private var now = Date()
+
+    private let timer = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
+
+    var body: some View {
+        Text(statusText)
+            .font(.caption2.monospacedDigit())
+            .foregroundStyle(.tertiary)
+            .onReceive(timer) { value in now = value }
+            .onAppear { UIDevice.current.isBatteryMonitoringEnabled = true }
+    }
+
+    private var statusText: String {
+        let time = now.formatted(.dateTime.hour().minute())
+        let level = UIDevice.current.batteryLevel
+        if level < 0 { return time }
+        return time + "  \(Int(round(level * 100)))%"
     }
 }

@@ -5,9 +5,10 @@ enum NovelParser {
     /// 常见的中文小说章节标题形态
     private static let chapterPatterns: [NSRegularExpression] = {
         let patterns = [
-            #"^\s{0,4}(第\s*[0-9零一二三四五六七八九十百千万两]+\s*[章节回卷篇折出集部])([\s\S]{0,60})"#,
+            #"^\s{0,4}(第\s*[0-9０-９零一二三四五六七八九十百千万两]+\s*[章节回节卷篇折出集部幕])([\s\S]{0,60})"#,
             #"^\s{0,4}(Chapter|CHAPTER|chapter)\s*[0-9IVXivx]+([\s\S]{0,60})"#,
-            #"^\s{0,4}(序章|序言|楔子|后记|尾声|番外|终章)([\s\S]{0,60})"#
+            #"^\s{0,4}(序章|序言|楔子|引子|后记|尾声|番外|终章|结语)([\s\S]{0,60})"#,
+            #"^\s{0,4}([0-9]{1,4})\s*[、.．]\s*\S{1,40}\s*$"#
         ]
         return patterns.compactMap { try? NSRegularExpression(pattern: $0, options: [.anchorsMatchLines]) }
     }()
@@ -44,6 +45,9 @@ enum NovelParser {
     // MARK: - 内部实现
 
     private static func decode(_ data: Data) -> String? {
+        // 先按 BOM 精确判定（Windows 导出的 txt 常带 BOM）
+        if let bomText = decodeByBOM(data) { return bomText }
+
         for encoding in encodings {
             if let text = String(data: data, encoding: encoding) {
                 // UTF-8 误判检测：GB18030 文本用 UTF-8 解码会得到大量替换字符
@@ -51,6 +55,21 @@ enum NovelParser {
                 if encoding == .utf8 && broken { continue }
                 if !broken || encoding != .utf8 { return text }
             }
+        }
+        return nil
+    }
+
+    private static func decodeByBOM(_ data: Data) -> String? {
+        guard data.count >= 2 else { return nil }
+        let bytes = [UInt8](data.prefix(3))
+        if bytes[0] == 0xEF, bytes[1] == 0xBB, bytes[2] == 0xBE || bytes[2] == 0xBF {
+            return String(data: data.dropFirst(3), encoding: .utf8)
+        }
+        if bytes[0] == 0xFF, bytes[1] == 0xFE {
+            return String(data: data.dropFirst(2), encoding: .utf16LittleEndian)
+        }
+        if bytes[0] == 0xFE, bytes[1] == 0xFF {
+            return String(data: data.dropFirst(2), encoding: .utf16BigEndian)
         }
         return nil
     }

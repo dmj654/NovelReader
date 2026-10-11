@@ -4,7 +4,6 @@ import UIKit
 /// 漫画阅读器：竖向图片流 + 章节切换，与小说阅读器分开管理。
 struct ComicReaderView: View {
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @EnvironmentObject private var library: LibraryStore
 
     let bookID: UUID
@@ -13,6 +12,7 @@ struct ComicReaderView: View {
     @State private var chapterIndex = 0
     @State private var imageURLs: [String] = []
     @State private var isLoadingImages = false
+    @State private var loadError: String?
     @State private var showChapterList = false
 
     init(book: Book) {
@@ -116,26 +116,23 @@ struct ComicReaderView: View {
 
     // MARK: - 图片流
 
+    @ViewBuilder
     private var imageList: some View {
-        ScrollView(.vertical, showsIndicators: true) {
-            LazyVStack(spacing: 0) {
-                if isLoadingImages {
+        if isLoadingImages {
+            ScrollView(.vertical, showsIndicators: false) {
+                LazyVStack(spacing: 0) {
                     ForEach(0..<4, id: \.self) { _ in
                         placeholder
                     }
-                } else if imageURLs.isEmpty {
-                    VStack(spacing: 12) {
-                        Image(systemName: "photo.on.rectangle.angled")
-                            .font(.system(size: 40))
-                            .foregroundStyle(.white.opacity(0.5))
-                        Text("这一话暂无图片")
-                            .font(.subheadline)
-                            .foregroundStyle(.white.opacity(0.7))
-                    }
-                    .padding(.top, 120)
-                } else {
-                    ForEach(imageURLs, id: \.self) { url in
-                        RemoteImage(urlString: url)
+                }
+            }
+        } else if imageURLs.isEmpty {
+            emptyState
+        } else {
+            ScrollView(.vertical, showsIndicators: true) {
+                LazyVStack(spacing: 0) {
+                    ForEach(Array(imageURLs.enumerated()), id: \.element) { index, url in
+                        ComicPageView(urlString: url, pageIndex: index + 1, total: imageURLs.count)
                     }
                     endCard
                 }
@@ -151,9 +148,35 @@ struct ComicReaderView: View {
             .padding(.horizontal, 60)
     }
 
+    private var emptyState: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "photo.on.rectangle.angled")
+                .font(.system(size: 44))
+                .foregroundStyle(.white.opacity(0.5))
+            Text(loadError ?? "这一话暂无图片")
+                .font(.subheadline)
+                .foregroundStyle(.white.opacity(0.75))
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 40)
+            Button {
+                Task { await loadChapterIfNeeded(force: true) }
+            } label: {
+                Label("重新加载", systemImage: "arrow.clockwise")
+                    .font(.subheadline.weight(.semibold))
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 10)
+                    .background(Color.accentColor, in: Capsule())
+                    .foregroundStyle(.white)
+            }
+            .buttonStyle(.plain)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.top, 40)
+    }
+
     private var endCard: some View {
         VStack(spacing: 10) {
-            Text("本话完")
+            Text("本话完 · 共 \(imageURLs.count) 页")
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(.white.opacity(0.8))
             if chapterIndex < book.chapters.count - 1 {
@@ -167,7 +190,7 @@ struct ComicReaderView: View {
                         .background(Color.accentColor, in: Capsule())
                         .foregroundStyle(.white)
                 }
-                .buttonStyle(ScaleButtonStyle())
+                .buttonStyle(.plain)
             }
         }
         .padding(.vertical, 40)
@@ -176,10 +199,15 @@ struct ComicReaderView: View {
 
     // MARK: - 数据
 
-    private func loadChapterIfNeeded() async {
+    private func loadChapterIfNeeded(force: Bool = false) async {
+        loadError = nil
+
         // 已有图片列表（本地漫画 / 之前抓取过）
-        if let pages = book.pageImages, book.chapters.indices.contains(chapterIndex),
-           pages.indices.contains(chapterIndex), !pages[chapterIndex].isEmpty {
+        if !force,
+           let pages = book.pageImages,
+           book.chapters.indices.contains(chapterIndex),
+           pages.indices.contains(chapterIndex),
+           !pages[chapterIndex].isEmpty {
             imageURLs = pages[chapterIndex]
             return
         }
@@ -188,6 +216,7 @@ struct ComicReaderView: View {
               let links = book.chapterLinks, links.indices.contains(chapterIndex),
               let source = library.source(withID: sourceID) else {
             imageURLs = []
+            loadError = "这一话没有图片来源。本地漫画请从书架右上角 ＋ 导入图片；书源漫画请确认书源的图片规则正确。"
             return
         }
 
@@ -209,21 +238,26 @@ struct ComicReaderView: View {
             }
         } catch {
             imageURLs = []
+            loadError = "图片加载失败：\(error.localizedDescription)"
         }
     }
 }
 
-// MARK: - 单张远程图片
+// MARK: - 单页图片（支持本地文件 / 内置示例页 / 远程地址）
 
-private struct RemoteImage: View {
+private struct ComicPageView: View {
     let urlString: String
+    let pageIndex: Int
+    let total: Int
 
     @State private var image: UIImage?
     @State private var failed = false
 
     var body: some View {
         Group {
-            if let image {
+            if urlString.hasPrefix("art://") {
+                ComicArtPage(pageIndex: pageIndex, total: total)
+            } else if let image {
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFit()
@@ -232,7 +266,7 @@ private struct RemoteImage: View {
                 VStack(spacing: 8) {
                     Image(systemName: "wifi.exclamationmark")
                         .foregroundStyle(.white.opacity(0.6))
-                    Text("图片加载失败")
+                    Text("第 \(pageIndex) 页加载失败")
                         .font(.caption)
                         .foregroundStyle(.white.opacity(0.6))
                 }
@@ -248,11 +282,9 @@ private struct RemoteImage: View {
         }
         .frame(maxWidth: .infinity)
         .task(id: urlString) {
-            guard image == nil else { return }
+            guard image == nil, !urlString.hasPrefix("art://") else { return }
             if let loaded = await Self.load(urlString) {
-                withAnimation(.easeOut(duration: 0.25)) {
-                    image = loaded
-                }
+                image = loaded
             } else {
                 failed = true
             }
@@ -260,16 +292,84 @@ private struct RemoteImage: View {
     }
 
     private static func load(_ urlString: String) async -> UIImage? {
-        guard let url = URL(string: urlString) else { return nil }
+        // 本地导入的漫画：相对沙盒 Documents 的路径
+        if urlString.hasPrefix("local://") {
+            let relative = String(urlString.dropFirst("local://".count))
+            let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+            guard let documents else { return nil }
+            let fileURL = documents.appendingPathComponent(relative)
+            return UIImage(contentsOfFile: fileURL.path)
+        }
+        guard let url = URL(string: urlString), url.scheme != nil else { return nil }
         var request = URLRequest(url: url)
-        request.timeoutInterval = 20
+        request.timeoutInterval = 25
         request.cachePolicy = .returnCacheDataElseLoad
+        request.setValue(
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15",
+            forHTTPHeaderField: "User-Agent"
+        )
         do {
             let (data, _) = try await URLSession.shared.data(for: request)
             return UIImage(data: data)
         } catch {
             return nil
         }
+    }
+}
+
+// MARK: - 内置示例漫画页（纯本地绘制，不联网也能看）
+
+private struct ComicArtPage: View {
+    let pageIndex: Int
+    let total: Int
+
+    private var palette: [Color] {
+        let sets: [[Color]] = [
+            [Color(red: 0.36, green: 0.58, blue: 0.92), Color(red: 0.86, green: 0.93, blue: 0.99)],
+            [Color(red: 0.98, green: 0.66, blue: 0.42), Color(red: 0.99, green: 0.92, blue: 0.80)],
+            [Color(red: 0.30, green: 0.42, blue: 0.48), Color(red: 0.85, green: 0.90, blue: 0.88)]
+        ]
+        return sets[(pageIndex - 1) / 4 % sets.count]
+    }
+
+    private var symbol: String {
+        let symbols = ["cloud.sun.fill", "house.fill", "wind", "lightbulb.fill", "moon.stars.fill", "bicycle"]
+        return symbols[(pageIndex - 1) % symbols.count]
+    }
+
+    var body: some View {
+        ZStack {
+            LinearGradient(colors: palette, startPoint: .top, endPoint: .bottom)
+
+            VStack(spacing: 18) {
+                Image(systemName: symbol)
+                    .font(.system(size: 84))
+                    .foregroundStyle(.white.opacity(0.92))
+                    .shadow(radius: 8)
+                Text("第 \(pageIndex) 页")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.85))
+                Text("内置示例画面")
+                    .font(.caption2)
+                    .foregroundStyle(.white.opacity(0.6))
+            }
+
+            VStack {
+                Spacer(minLength: 0)
+                HStack {
+                    Spacer(minLength: 8)
+                    Text("\(pageIndex) / \(total)")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.white.opacity(0.75))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(Color.black.opacity(0.25), in: Capsule())
+                        .padding(12)
+                }
+            }
+        }
+        .aspectRatio(0.72, contentMode: .fit)
+        .frame(maxWidth: .infinity)
     }
 }
 

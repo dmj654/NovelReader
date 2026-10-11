@@ -68,10 +68,21 @@ struct SourceSearchView: View {
             }
 
             if availableSources.isEmpty {
-                Text("还没有启用的\(kind == .comic ? "漫画" : "小说")书源，请先到「我的 → 书源管理」添加。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 20)
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("还没有启用的\(kind == .comic ? "漫画" : "小说")书源。书源是一段描述「从哪里抓书」的规则，需要自己添加。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    NavigationLink {
+                        SourceManageView()
+                    } label: {
+                        Label("去书源管理添加", systemImage: "list.star")
+                            .font(.subheadline.weight(.semibold))
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 20)
             } else {
                 Picker("书源", selection: $selectedSourceID) {
                     ForEach(availableSources) { source in
@@ -187,7 +198,7 @@ struct SourceSearchView: View {
                 results = found
                 if found.isEmpty { toast = "没有搜到结果" }
             } catch {
-                toast = "搜索失败：\(error.localizedDescription)"
+                toast = "搜索失败：\(SourceEngine.readableMessage(error))"
             }
             isSearching = false
         }
@@ -202,6 +213,8 @@ struct SourceSearchView: View {
             if ok {
                 addedLinks.insert(result.link)
                 toast = "《\(result.title)》已加入书架"
+            } else {
+                toast = library.lastError ?? "加入书架失败，检查书源规则。"
             }
         }
     }
