@@ -32,24 +32,6 @@ targets:
           - "**/*.md"
     resources:
       - path: NovelReader/Resources/Assets.xcassets
-    info:
-      # 让「文件」App 与其他 App 可以把 TXT / JSON 分享到阅栈打开
-      CFBundleDocumentTypes:
-        - CFBundleTypeName: "Text Document"
-          CFBundleTypeRole: Viewer
-          LSHandlerRank: Alternate
-          LSItemContentTypes:
-            - public.plain-text
-            - public.text
-            - public.data
-        - CFBundleTypeName: "JSON Source"
-          CFBundleTypeRole: Viewer
-          LSHandlerRank: Alternate
-          LSItemContentTypes:
-            - public.json
-      # 书源站点良莠不齐，允许 http 以免整站抓不下来
-      NSAppTransportSecurity:
-        NSAllowsArbitraryLoads: true
     settings:
       base:
         PRODUCT_NAME: 阅栈
