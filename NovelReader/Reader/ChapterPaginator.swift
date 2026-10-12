@@ -74,7 +74,7 @@ enum ChapterPaginator {
             if glyphRange.length == 0 { break }
 
             let charRange = layoutManager.characterRange(forGlyphRange: glyphRange, actualGlyphRange: nil)
-            var start = max(charRange.location, charLocation)
+            let start = max(charRange.location, charLocation)
             var span = charRange.length
             if start > charRange.location {
                 span -= (start - charRange.location)
@@ -91,8 +91,10 @@ enum ChapterPaginator {
         return ranges.isEmpty ? [NSRange(location: 0, length: length)] : ranges
     }
 
-    /// 单章分页（可在后台线程执行）
-    static func paginateChapter(
+    /// 单章分页（可在后台线程执行）。
+    /// 必须标 fileprivate：它的返回类型 ChapterPagination 是文件内私有类型，
+    /// 否则 Swift 会报 "method must be declared fileprivate because its result uses a private type"。
+    fileprivate static func paginateChapter(
         index: Int,
         title: String,
         content: String,
