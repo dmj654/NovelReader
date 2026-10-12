@@ -36,13 +36,14 @@ targets:
     sources:
       - path: NovelReader
         excludes:
-          - "Resources/**"
           - "Preview Content/**"
           - "**/*.md"
-    # 指向整个 Resources 目录（而不是其中的 Assets.xcassets），
-    # 这样 XcodeGen 才会把 asset catalog 加进 Resources 构建阶段并用 actool 编译
+    # 资源目录与源码目录平级（仓库根下 Resources/）。
+    # ⚠️ 不能放在 NovelReader/Resources 再用 excludes 排除——那样 XcodeGen 不会把
+    # asset catalog 加进 Resources 构建阶段，Archive 日志里连 actool 都不会调用，
+    # 表现为「App 图标空白 + 全部语义色丢失」。
     resources:
-      - path: NovelReader/Resources
+      - path: Resources
     # 显式 Info.plist：需要 ATS 例外（http 书源）与文档类型（分享打开）
     info:
       path: Support/Info.plist
