@@ -370,7 +370,7 @@ final class LibraryStore: ObservableObject {
             return true
         } catch {
             await MainActor.run {
-                lastError = "加入书架失败：\(error.localizedDescription)"
+                self.lastError = "加入书架失败：\(error.localizedDescription)"
             }
             return false
         }

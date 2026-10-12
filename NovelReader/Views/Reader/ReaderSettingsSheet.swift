@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// 阅读设置面板：字号、行距、段距、页边距、字体、段首缩进、主题、翻页方式、亮度与常亮。
 struct ReaderSettingsSheet: View {

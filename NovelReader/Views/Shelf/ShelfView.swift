@@ -240,7 +240,7 @@ struct ShelfView: View {
             .controlSize(.large)
 
             if section == .novel {
-                Text("也可以直接在「文件」App 里长按 txt → 分享 → 阅栈")
+                Text("支持 UTF-8 / GBK / UTF-16 编码，章节自动识别")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }

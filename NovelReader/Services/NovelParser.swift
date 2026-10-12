@@ -60,9 +60,10 @@ enum NovelParser {
     }
 
     private static func decodeByBOM(_ data: Data) -> String? {
+        // 至少要 3 个字节才能判 UTF-8 BOM（判 UTF-16 只需 2 个，这里统一按最长的取）
         guard data.count >= 2 else { return nil }
         let bytes = [UInt8](data.prefix(3))
-        if bytes[0] == 0xEF, bytes[1] == 0xBB, bytes[2] == 0xBE || bytes[2] == 0xBF {
+        if bytes.count >= 3, bytes[0] == 0xEF, bytes[1] == 0xBB, bytes[2] == 0xBE || bytes[2] == 0xBF {
             return String(data: data.dropFirst(3), encoding: .utf8)
         }
         if bytes[0] == 0xFF, bytes[1] == 0xFE {
