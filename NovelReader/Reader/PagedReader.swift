@@ -13,6 +13,10 @@ struct PagedReader: UIViewControllerRepresentable {
     @Binding var currentIndex: Int
     /// 听书跟读：返回某页需要高亮的页内区间（nil = 不高亮）
     var highlightFor: (Int) -> NSRange? = { _ in nil }
+    /// 正文区实测尺寸回调：渲染端量到容器真实宽高后回传，分页端按这个尺寸算，
+    /// 从机制上保证"分页用的高度 == 渲染可用的高度"，杜绝底部截断或大片空白。
+    /// （v1.1 踩过的坑：在 .task 里读 safeAreaInsets 时布局尚未完成，拿到 0，高度算错一截）
+    var onBodySize: ((CGSize) -> Void)? = nil
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -81,7 +85,8 @@ struct PagedReader: UIViewControllerRepresentable {
                     backgroundColor: parent.backgroundColor,
                     bodyHeight: parent.bodyHeight,
                     horizontalPadding: parent.horizontalPadding,
-                    highlightRange: parent.highlightFor(index)
+                    highlightRange: parent.highlightFor(index),
+                    onBodySize: parent.onBodySize
                 )
             }
         }
@@ -94,7 +99,8 @@ struct PagedReader: UIViewControllerRepresentable {
                         page: nil,
                         backgroundColor: parent.backgroundColor,
                         bodyHeight: parent.bodyHeight,
-                        horizontalPadding: parent.horizontalPadding
+                        horizontalPadding: parent.horizontalPadding,
+                        onBodySize: parent.onBodySize
                     )
                 )
             }
@@ -104,7 +110,8 @@ struct PagedReader: UIViewControllerRepresentable {
                     backgroundColor: parent.backgroundColor,
                     bodyHeight: parent.bodyHeight,
                     horizontalPadding: parent.horizontalPadding,
-                    highlightRange: parent.highlightFor(index)
+                    highlightRange: parent.highlightFor(index),
+                    onBodySize: parent.onBodySize
                 )
             )
             host.view.backgroundColor = parent.backgroundColor
@@ -153,34 +160,49 @@ struct ReaderPageContainer: View {
     let bodyHeight: CGFloat
     let horizontalPadding: CGFloat
     var highlightRange: NSRange? = nil
+    /// 渲染端实测尺寸回调（见 PagedReader.onBodySize）
+    var onBodySize: ((CGSize) -> Void)? = nil
 
     var body: some View {
-        Color(uiColor: backgroundColor)
-            .overlay(alignment: .top) {
-                if let page {
-                    VStack(spacing: 0) {
-                        pageHeader(page)
-                            .frame(height: ReaderLayout.headerHeight)
+        // 用 GeometryReader 量到"这一页真实被分到的高度"，减去页眉页脚后回传给分页端。
+        // 这是分页与渲染唯一的尺寸来源，两边不可能再对不上。
+        GeometryReader { geo in
+            Color(uiColor: backgroundColor)
+                .overlay(alignment: .top) {
+                    if let page {
+                        VStack(spacing: 0) {
+                            pageHeader(page)
+                                .frame(height: ReaderLayout.headerHeight)
 
-                        ReaderPageView(
-                            attributedText: page.attributedText,
-                            backgroundColor: backgroundColor,
-                            highlightRange: highlightRange
-                        )
-                        // 左右边距必须和分页时扣掉的宽度完全一致，否则行宽不同、页面底部会留白
-                        .padding(.horizontal, horizontalPadding)
-                        .frame(height: max(bodyHeight, 1))
-                        .clipped()
+                            ReaderPageView(
+                                attributedText: page.attributedText,
+                                backgroundColor: backgroundColor,
+                                highlightRange: highlightRange
+                            )
+                            // 左右边距必须和分页时扣掉的宽度完全一致，否则行宽不同、页面底部会留白
+                            .padding(.horizontal, horizontalPadding)
+                            .frame(height: max(bodyHeight, 1))
+                            .clipped()
 
-                        Spacer(minLength: 0)
+                            Spacer(minLength: 0)
 
-                        pageFooter(page)
-                            .frame(height: ReaderLayout.footerHeight)
+                            pageFooter(page)
+                                .frame(height: ReaderLayout.footerHeight)
+                        }
+                        .accessibilityElement(children: .combine)
+                        .accessibilityLabel("第 \(page.globalIndex + 1) 页，共 \(page.totalPages) 页")
                     }
-                    .accessibilityElement(children: .combine)
-                    .accessibilityLabel("第 \(page.globalIndex + 1) 页，共 \(page.totalPages) 页")
                 }
-            }
+                .onAppear { report(geo.size) }
+                .onChange(of: geo.size) { _, new in report(new) }
+        }
+    }
+
+    /// 把"容器真实高度 − 页眉 − 页脚"回传给分页端
+    private func report(_ size: CGSize) {
+        guard size.width > 0, size.height > 0 else { return }
+        let bodyHeight = max(size.height - ReaderLayout.headerHeight - ReaderLayout.footerHeight, 1)
+        onBodySize?(CGSize(width: max(size.width - horizontalPadding * 2, 1), height: bodyHeight))
     }
 
     private func pageHeader(_ page: ReaderPage) -> some View {

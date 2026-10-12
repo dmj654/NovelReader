@@ -103,17 +103,21 @@ final class LibraryStore: ObservableObject {
     // MARK: - 导入
 
     /// 导入本地 txt 文件（异步解析，不卡界面；无论成败都返回一句可展示的说明）
+    ///
+    /// ⚠️ security-scoped 授权必须和文件读取在**同一个线程上下文**里开关：
+    /// 在主线程 start、再切到后台线程 Data(contentsOf:) 会直接拿到 EPERM（拒绝访问），
+    /// 这正是 v1.1 "选完文件没反应"的根因。所以 start/stop 全部搬进 detached 闭包内。
     @discardableResult
     func importBook(from url: URL) async -> LibraryImportOutcome {
-        let accessed = url.startAccessingSecurityScopedResource()
         let parsed = await Task.detached(priority: .userInitiated) { () -> Result<Book, Error> in
+            let accessed = url.startAccessingSecurityScopedResource()
+            defer { if accessed { url.stopAccessingSecurityScopedResource() } }
             do {
                 return .success(try NovelParser.parse(fileURL: url))
             } catch {
                 return .failure(error)
             }
         }.value
-        if accessed { url.stopAccessingSecurityScopedResource() }
 
         switch parsed {
         case .failure(let error):
@@ -127,11 +131,14 @@ final class LibraryStore: ObservableObject {
                     self.lastError = message
                     return LibraryImportOutcome(success: false, message: message, bookID: nil)
                 }
-                guard !self.books.contains(where: { $0.title == book.title && $0.author == book.author }) else {
+                // 同一本书重复导入：不算失败，直接定位到书架上那本。
+                // （以前这里返回 success=false，用户重复导入时只看到一句"已在书架"，
+                //  观感就是"导入了却没效果"）
+                if let existing = self.books.first(where: { $0.title == book.title && $0.author == book.author }) {
                     return LibraryImportOutcome(
-                        success: false,
-                        message: "《\(book.title)》已经在书架里了。",
-                        bookID: nil
+                        success: true,
+                        message: "《\(existing.title)》已经在书架里了，直接为你打开。",
+                        bookID: existing.id
                     )
                 }
                 self.add(book)

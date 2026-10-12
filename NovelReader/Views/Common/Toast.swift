@@ -18,7 +18,9 @@ struct ToastModifier: ViewModifier {
                         .padding(.bottom, 24)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                         .task {
-                            try? await Task.sleep(nanoseconds: 2_600_000_000)
+                            // 3.5 秒：导入结果的文案有点长（"已导入《书名》，共 N 章"），
+                            // 2.6 秒经常没读完就消失了，用户以为没有反馈
+                            try? await Task.sleep(nanoseconds: 3_500_000_000)
                             self.message = nil
                         }
                 }

@@ -115,6 +115,7 @@ struct ShelfView: View {
             .fullScreenCover(item: $readerBook) { book in
                 if book.isComic {
                     ComicReaderView(book: book)
+                        .environmentObject(library)
                 } else {
                     ReaderView(book: book, library: library, settings: settings)
                 }
@@ -189,6 +190,11 @@ struct ShelfView: View {
         let outcome = await library.importBook(from: url)
         isImporting = false
         importMessage = outcome.message
+        // 强反馈：导入成功就直接打开这本书。
+        // 只往书架末尾加一本书、用户很容易没注意到，观感就是"导入没效果"。
+        if outcome.success, let id = outcome.bookID, let book = library.book(withID: id) {
+            readerBook = book
+        }
     }
 
     private func importComic() async {
@@ -198,6 +204,10 @@ struct ShelfView: View {
         let outcome = await library.importComic(title: comicTitle, imageURLs: urls)
         isImporting = false
         importMessage = outcome.message
+        // 漫画同样导入后直接打开，确认真的导进来了
+        if outcome.success, let id = outcome.bookID, let book = library.book(withID: id) {
+            readerBook = book
+        }
     }
 
     private var defaultComicTitle: String {

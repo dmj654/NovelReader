@@ -249,10 +249,13 @@ final class ReadingSettingsStore: ObservableObject {
 
     // MARK: 排版
 
-    /// 生成正文富文本样式；字号再经 UIFontMetrics 缩放以支持 Dynamic Type
+    /// 生成正文富文本样式。
+    ///
+    /// ⚠️ 这里**故意不做 UIFontMetrics 缩放**：用户拖字号滑块就是要那个精确值，
+    /// 再叠一层 Dynamic Type 缩放会让实际显示字号比滑块大（v1.1"一页字少"的根因之一）。
+    /// 渲染端 ReaderPageView 也已把 adjustsFontForContentSizeCategory 关掉，两边一致。
     func bodyAttributes() -> [NSAttributedString.Key: Any] {
         let base = fontOption.font(ofSize: fontSize)
-        let scaled = UIFontMetrics(forTextStyle: .body).scaledFont(for: base)
 
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineSpacing = lineSpacing
@@ -264,7 +267,7 @@ final class ReadingSettingsStore: ObservableObject {
         paragraph.hyphenationFactor = 0
 
         return [
-            .font: scaled,
+            .font: base,
             .paragraphStyle: paragraph,
             .foregroundColor: UIColor(named: theme.textAsset) ?? .label
         ]

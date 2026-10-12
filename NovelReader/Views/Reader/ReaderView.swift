@@ -122,7 +122,12 @@ struct ReaderView: View {
             case .horizontal:
                 pagedReader(style: .scroll)
             case .scroll:
-                ScrollReaderView(viewModel: viewModel, backgroundColor: backgroundColor)
+                ScrollReaderView(
+                    viewModel: viewModel,
+                    backgroundColor: backgroundColor,
+                    // 滚动模式同样由渲染端回传实测尺寸（分页结果只用于进度条，但尺寸必须一致）
+                    onBodySize: { size in viewModel.updatePageSize(size) }
+                )
                     .contentShape(Rectangle())
                     .onTapGesture { viewModel.toggleChrome() }
             }
@@ -142,6 +147,10 @@ struct ReaderView: View {
             ),
             highlightFor: { pageIndex in
                 speechHighlightRange(forPageAt: pageIndex)
+            },
+            // 渲染端实测尺寸驱动分页：这是唯一权威来源
+            onBodySize: { size in
+                viewModel.updatePageSize(size)
             }
         )
         .overlay {
@@ -528,37 +537,49 @@ enum SpeechPreset {
 private struct ScrollReaderView: View {
     @ObservedObject var viewModel: ReaderViewModel
     let backgroundColor: UIColor
+    /// 渲染端实测尺寸回调（与 PagedReader.onBodySize 同一用途）
+    var onBodySize: ((CGSize) -> Void)? = nil
 
     @State private var scrolledChapterID: UUID?
     @EnvironmentObject private var settings: ReadingSettingsStore
 
     var body: some View {
-        ScrollView(.vertical, showsIndicators: false) {
-            LazyVStack(alignment: .leading, spacing: 32) {
-                ForEach(Array(viewModel.book.chapters.enumerated()), id: \.element.id) { index, chapter in
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text(chapter.title)
-                            .font(.title3.weight(.semibold))
-                            .foregroundStyle(Color(uiColor: UIColor(named: settings.theme.textAsset) ?? .label))
+        GeometryReader { geo in
+            ScrollView(.vertical, showsIndicators: false) {
+                LazyVStack(alignment: .leading, spacing: 32) {
+                    ForEach(Array(viewModel.book.chapters.enumerated()), id: \.element.id) { index, chapter in
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text(chapter.title)
+                                .font(.title3.weight(.semibold))
+                                .foregroundStyle(Color(uiColor: UIColor(named: settings.theme.textAsset) ?? .label))
 
-                        ChapterScrollTextView(attributedText: attributed(chapter.content))
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                            ChapterScrollTextView(attributedText: attributed(chapter.content))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .id(chapter.id)
+                        .padding(.horizontal, settings.horizontalPadding)
+                        .padding(.top, index == 0 ? 24 : 0)
+                        .onAppear { syncProgress(for: index) }
                     }
-                    .id(chapter.id)
-                    .padding(.horizontal, settings.horizontalPadding)
-                    .padding(.top, index == 0 ? 24 : 0)
-                    .onAppear { syncProgress(for: index) }
                 }
+                .scrollTargetLayout()
             }
-            .scrollTargetLayout()
+            .background(Color(uiColor: backgroundColor).ignoresSafeArea())
+            .scrollPosition(id: $scrolledChapterID, anchor: .top)
+            .onAppear {
+                scrolledChapterID = viewModel.book.chapters.indices.contains(viewModel.activeChapterIndex)
+                    ? viewModel.book.chapters[viewModel.activeChapterIndex].id
+                    : viewModel.book.chapters.first?.id
+                report(geo.size)
+            }
+            .onChange(of: geo.size) { _, new in report(new) }
         }
-        .background(Color(uiColor: backgroundColor).ignoresSafeArea())
-        .scrollPosition(id: $scrolledChapterID, anchor: .top)
-        .onAppear {
-            scrolledChapterID = viewModel.book.chapters.indices.contains(viewModel.activeChapterIndex)
-                ? viewModel.book.chapters[viewModel.activeChapterIndex].id
-                : viewModel.book.chapters.first?.id
-        }
+    }
+
+    private func report(_ size: CGSize) {
+        guard size.width > 0, size.height > 0 else { return }
+        let bodyHeight = max(size.height - ReaderLayout.headerHeight - ReaderLayout.footerHeight, 1)
+        onBodySize?(CGSize(width: max(size.width - settings.horizontalPadding * 2, 1), height: bodyHeight))
     }
 
     private func attributed(_ text: String) -> NSAttributedString {
