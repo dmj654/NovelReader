@@ -37,8 +37,8 @@ targets:
         PRODUCT_NAME: 阅栈
         PRODUCT_BUNDLE_IDENTIFIER: com.novelreader.app
         # 版本号：装到手机后，在「我的 → 版本」能看到，用来确认装的是不是最新版
-        MARKETING_VERSION: "1.1.0"
-        CURRENT_PROJECT_VERSION: "2"
+        MARKETING_VERSION: "1.2.0"
+        CURRENT_PROJECT_VERSION: "3"
         TARGETED_DEVICE_FAMILY: "1,2"
         GENERATE_INFOPLIST_FILE: "YES"
         # iOS 17 起可用生成的启动屏，无需 LaunchScreen.storyboard
