@@ -164,9 +164,15 @@ struct ReaderPageContainer: View {
     var onBodySize: ((CGSize) -> Void)? = nil
 
     var body: some View {
-        // 用 GeometryReader 量到"这一页真实被分到的高度"，减去页眉页脚后回传给分页端。
+        // 用 GeometryReader 量到"这一页真实被分到的高度"，扣掉安全区与页眉页脚后回传给分页端。
         // 这是分页与渲染唯一的尺寸来源，两边不可能再对不上。
+        //
+        // ⚠️ v1.2 第三次修这个 bug 的关键：UIPageViewController 的页面视图是**铺满全屏**的
+        // （393×852，不是安全区内的 393×771）。如果直接按量到的高度排，页眉会被灵动岛/
+        // 状态栏压住、页脚会钻到 Home 指示条底下——肉眼看就是"改了跟没改一样"。
+        // 所以这里必须按 geo.safeAreaInsets 显式内缩，分页端也按扣掉安全区后的高度回传。
         GeometryReader { geo in
+            let insets = geo.safeAreaInsets
             Color(uiColor: backgroundColor)
                 .overlay(alignment: .top) {
                     if let page {
@@ -189,20 +195,28 @@ struct ReaderPageContainer: View {
                             pageFooter(page)
                                 .frame(height: ReaderLayout.footerHeight)
                         }
+                        // 按实测安全区内缩：页眉落在灵动岛下方，页脚落在 Home 条上方
+                        .padding(.top, insets.top)
+                        .padding(.bottom, insets.bottom)
+                        .padding(.horizontal, insets.leading + insets.trailing)
                         .accessibilityElement(children: .combine)
                         .accessibilityLabel("第 \(page.globalIndex + 1) 页，共 \(page.totalPages) 页")
                     }
                 }
-                .onAppear { report(geo.size) }
-                .onChange(of: geo.size) { _, new in report(new) }
+                .onAppear { report(geo.size, insets: insets) }
+                .onChange(of: geo.size) { _, new in report(new, insets: insets) }
+                // 旋转、通话中状态栏变高都会改变安全区，必须重新回传尺寸
+                .onChange(of: geo.safeAreaInsets) { _, new in report(geo.size, insets: new) }
         }
     }
 
-    /// 把"容器真实高度 − 页眉 − 页脚"回传给分页端
-    private func report(_ size: CGSize) {
+    /// 把"容器真实高度 − 安全区 − 页眉 − 页脚"回传给分页端
+    private func report(_ size: CGSize, insets: EdgeInsets) {
         guard size.width > 0, size.height > 0 else { return }
-        let bodyHeight = max(size.height - ReaderLayout.headerHeight - ReaderLayout.footerHeight, 1)
-        onBodySize?(CGSize(width: max(size.width - horizontalPadding * 2, 1), height: bodyHeight))
+        let usableHeight = max(size.height - insets.top - insets.bottom, 1)
+        let usableWidth = max(size.width - insets.leading - insets.trailing, 1)
+        let bodyHeight = max(usableHeight - ReaderLayout.headerHeight - ReaderLayout.footerHeight, 1)
+        onBodySize?(CGSize(width: max(usableWidth - horizontalPadding * 2, 1), height: bodyHeight))
     }
 
     private func pageHeader(_ page: ReaderPage) -> some View {

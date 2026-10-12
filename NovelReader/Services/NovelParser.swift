@@ -28,13 +28,34 @@ enum NovelParser {
         let accessed = fileURL.startAccessingSecurityScopedResource()
         defer { if accessed { fileURL.stopAccessingSecurityScopedResource() } }
 
-        let data = try Data(contentsOf: fileURL, options: .mappedIfSafe)
+        let data = try readData(from: fileURL)
         guard let text = decode(data) else {
             throw NovelParserError.encodingNotSupported
         }
 
         let filename = fileURL.deletingPathExtension().lastPathComponent
         return makeBook(from: text, fallbackTitle: filename)
+    }
+
+    /// 读取 security-scoped 文件内容。
+    ///
+    /// ⚠️ 这里**不能用** `Data(contentsOf: options: .mappedIfSafe)`：
+    /// 内存映射走 mmap，沙盒对映射进来的外部文件会直接判 EPERM
+    /// （表现为"选完文件一点反应都没有"）。所以先用普通 read 读，
+    /// 万一某些来源（iCloud 占位文件、压缩文档内的文件）连普通读也失败，
+    /// 就把文件复制进沙盒再读一遍——两条路都走不通才真的报错。
+    private static func readData(from url: URL) throws -> Data {
+        do {
+            return try Data(contentsOf: url)
+        } catch {
+            // 临时文件名不带原文件名：原文件名可能超长或含特殊字符，复制反而会再失败一次
+            let temp = FileManager.default.temporaryDirectory
+                .appendingPathComponent("novelreader-import-\(UUID().uuidString).txt")
+            try? FileManager.default.removeItem(at: temp)
+            try FileManager.default.copyItem(at: url, to: temp)
+            defer { try? FileManager.default.removeItem(at: temp) }
+            return try Data(contentsOf: temp)
+        }
     }
 
     /// 从纯文本解析

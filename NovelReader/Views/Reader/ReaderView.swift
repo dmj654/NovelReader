@@ -57,7 +57,12 @@ struct ReaderView: View {
             }
             .task {
                 viewModel.onAppear()
-                viewModel.updatePageSize(pageBodySize(for: proxy.size, insets: proxy.safeAreaInsets))
+                // 布局未完成时 safeAreaInsets 可能还是 0，此时算出来的正文高度会大出一截
+                // （v1.1 踩过：底部被页眉页脚之外的区域顶掉）。这种时候不抢跑，
+                // 交给渲染端 ReaderPageContainer.onAppear 回传实测尺寸——它一定会报。
+                let insets = proxy.safeAreaInsets
+                guard insets.top > 0 || insets.bottom > 0 else { return }
+                viewModel.updatePageSize(pageBodySize(for: proxy.size, insets: insets))
             }
             .task(id: viewModel.activeChapterIndex) {
                 // 书源书：进入章节时按需抓取正文
@@ -570,16 +575,20 @@ private struct ScrollReaderView: View {
                 scrolledChapterID = viewModel.book.chapters.indices.contains(viewModel.activeChapterIndex)
                     ? viewModel.book.chapters[viewModel.activeChapterIndex].id
                     : viewModel.book.chapters.first?.id
-                report(geo.size)
+                report(geo.size, insets: geo.safeAreaInsets)
             }
-            .onChange(of: geo.size) { _, new in report(new) }
+            .onChange(of: geo.size) { _, new in report(new, insets: geo.safeAreaInsets) }
+            .onChange(of: geo.safeAreaInsets) { _, new in report(geo.size, insets: new) }
         }
     }
 
-    private func report(_ size: CGSize) {
+    /// 与仿真模式保持一致：可用高度 = 容器高度 − 安全区 − 页眉 − 页脚
+    private func report(_ size: CGSize, insets: EdgeInsets) {
         guard size.width > 0, size.height > 0 else { return }
-        let bodyHeight = max(size.height - ReaderLayout.headerHeight - ReaderLayout.footerHeight, 1)
-        onBodySize?(CGSize(width: max(size.width - settings.horizontalPadding * 2, 1), height: bodyHeight))
+        let usableHeight = max(size.height - insets.top - insets.bottom, 1)
+        let usableWidth = max(size.width - insets.leading - insets.trailing, 1)
+        let bodyHeight = max(usableHeight - ReaderLayout.headerHeight - ReaderLayout.footerHeight, 1)
+        onBodySize?(CGSize(width: max(usableWidth - settings.horizontalPadding * 2, 1), height: bodyHeight))
     }
 
     private func attributed(_ text: String) -> NSAttributedString {
