@@ -84,6 +84,26 @@ struct SourceSearchView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 20)
             } else {
+                // 选中的是内置示例源时说清楚，否则用户搜 example.com 搜不到东西，
+                // 会以为"书源功能没反应"
+                if let source = activeSource, source.id.hasPrefix("demo-") {
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: "info.circle.fill")
+                            .foregroundStyle(.orange)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("这是示例书源，站点是 example.com，搜不到内容是正常的")
+                                .font(.caption.weight(.semibold))
+                            Text("到「书源管理」把这个源的网址和规则换成你自己的站点，就能真的搜到书。")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(Color.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .padding(.horizontal, 20)
+                }
+
                 Picker("书源", selection: $selectedSourceID) {
                     ForEach(availableSources) { source in
                         Text(source.name).tag(Optional(source.id))
@@ -190,13 +210,20 @@ struct SourceSearchView: View {
         let keyword = query.trimmingCharacters(in: .whitespaces)
         guard !keyword.isEmpty else { return }
 
+        // 示例源的站点是 example.com，发请求只会失败或超时，还让用户干等。
+        // 直接说明白，比"点了没反应"好得多。
+        if source.id.hasPrefix("demo-") {
+            toast = "示例源站点（example.com）搜不到内容，请先把书源管理里的网址换成你自己的站点"
+            return
+        }
+
         isSearching = true
         results = []
         Task {
             do {
                 let found = try await SourceEngine.search(source: source, query: keyword, page: 1)
                 results = found
-                if found.isEmpty { toast = "没有搜到结果" }
+                if found.isEmpty { toast = "没有搜到结果，换个关键字或检查书源规则" }
             } catch {
                 toast = "搜索失败：\(SourceEngine.readableMessage(error))"
             }

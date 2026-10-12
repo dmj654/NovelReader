@@ -1,6 +1,15 @@
 # XcodeGen 工程描述：用于自动生成 NovelReader.xcodeproj
 # 使用方式（在 macOS 上）：brew install xcodegen && xcodegen generate
-# 也可以直接在 Xcode 里手动新建工程（见 README 第三节），两种方式任选其一。
+#
+# ⚠️ 两个反复踩过的坑，改动前务必知道：
+# 1) resources 不能指向 sources group 内部又被 excludes 排除的路径 ——
+#    那样 XcodeGen 不会把它加进 Resources 构建阶段，Assets.xcassets 整个不进包，
+#    表现为"App 图标空白 + 所有语义色丢失"（ Archive 日志里连 actool 都不会调用）。
+#    正确做法：sources 排除 Resources/**，resources 指向**整个 Resources 目录**。
+# 2) info 块必须有 path + properties，且与 GENERATE_INFOPLIST_FILE 互斥。
+#    本工程需要 Info.plist 里带 NSAppTransportSecurity（http 书源）与
+#    CFBundleDocumentTypes（从文件 App 分享打开），所以用 info 块、
+#    不再用 GENERATE_INFOPLIST_FILE + INFOPLIST_KEY_*。
 
 name: NovelReader
 
@@ -30,8 +39,50 @@ targets:
           - "Resources/**"
           - "Preview Content/**"
           - "**/*.md"
+    # 指向整个 Resources 目录（而不是其中的 Assets.xcassets），
+    # 这样 XcodeGen 才会把 asset catalog 加进 Resources 构建阶段并用 actool 编译
     resources:
-      - path: NovelReader/Resources/Assets.xcassets
+      - path: NovelReader/Resources
+    # 显式 Info.plist：需要 ATS 例外（http 书源）与文档类型（分享打开）
+    info:
+      path: Support/Info.plist
+      properties:
+        CFBundleDisplayName: 阅栈
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleName: $(PRODUCT_NAME)
+        LSApplicationCategoryType: "public.app-category.books"
+        # iOS 17 起可用生成的启动屏，无需 LaunchScreen.storyboard
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        UIRequiredDeviceCapabilities:
+          - arm64
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        # 允许"文件"App 直接把 TXT / JSON 分享/打开到本 App
+        LSSupportsOpeningDocumentsInPlace: true
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: "Text Document"
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes:
+              - public.plain-text
+              - public.text
+              - public.data
+          - CFBundleTypeName: "JSON Source"
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes:
+              - public.json
+        # 书源站点良莠不齐，允许 http 以免整站抓不下来（v1.2 书源没反应的根因）
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
     settings:
       base:
         PRODUCT_NAME: 阅栈
@@ -40,17 +91,6 @@ targets:
         MARKETING_VERSION: "1.2.0"
         CURRENT_PROJECT_VERSION: "3"
         TARGETED_DEVICE_FAMILY: "1,2"
-        GENERATE_INFOPLIST_FILE: "YES"
-        # iOS 17 起可用生成的启动屏，无需 LaunchScreen.storyboard
-        INFOPLIST_KEY_UILaunchScreen_Generation: "YES"
-        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: "YES"
-        INFOPLIST_KEY_UIRequiredDeviceCapabilities: "arm64"
-        INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait"
-        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
-        # 允许"文件"App 直接把 TXT 分享/打开到本 App
-        INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace: "YES"
-        INFOPLIST_KEY_CFBundleDisplayName: 阅栈
-        INFOPLIST_KEY_LSApplicationCategoryType: "public.app-category.books"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         CODE_SIGN_STYLE: Automatic

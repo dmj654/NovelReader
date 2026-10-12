@@ -239,15 +239,21 @@ struct SourceManageView: View {
     private func addSampleSources() {
         var added = 0
         for sample in SampleLibrary.sampleSources {
-            if library.sources.contains(where: { $0.id == sample.id }) { continue }
+            if library.sources.contains(where: { $0.id == sample.id }) {
+                // 已在列表里：确保是启用状态（以前默认禁用，用户添加后搜不了）
+                if let existing = library.sources.first(where: { $0.id == sample.id }), !existing.isEnabled {
+                    library.toggleSource(existing, enabled: true)
+                }
+                continue
+            }
             var copy = sample
             copy.sortOrder = (library.sources.map(\.sortOrder).max() ?? -1) + 1 + added
             library.upsertSource(copy)
             added += 1
         }
         toast = added > 0
-            ? "已添加 \(added) 个示例书源。站点地址是 example.com，改成你自己的站点就能搜到书。"
-            : "示例书源已经在列表里了。"
+            ? "已添加并启用 \(added) 个示例书源。站点地址是 example.com，在搜索页会直接提示你换成自己的站点。"
+            : "示例书源已经在列表里了，并且已为你打开启用开关。"
     }
 
     private func checkAll() {

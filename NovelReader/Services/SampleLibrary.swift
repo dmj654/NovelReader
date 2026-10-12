@@ -6,6 +6,9 @@ enum SampleLibrary {
 
     /// 内置示例书源：示范 JSON / 正则规则长什么样。
     /// 站点地址是 example.com，搜不到东西属正常——把它改成你自己的站点即可使用。
+    ///
+    /// ⚠️ `isEnabled` 必须为 **true**：以前默认禁用，用户添加示例源后
+    /// 搜索页只会显示"还没有启用的书源"，观感就是"书源没反应"。
     static var bookSources: [BookSource] { [demoNovelSource, demoComicSource] }
 
     /// 供「添加示例书源」按钮使用：任何时候都能再写回来一份
@@ -17,7 +20,7 @@ enum SampleLibrary {
         baseURL: "https://www.example.com",
         searchTemplate: "https://www.example.com/search?q={query}&page={page}",
         isComic: false,
-        isEnabled: false,
+        isEnabled: true,
         sortOrder: 0,
         rules: SourceRules(
             listPattern: #"<a[^>]+href="([^"]+)"[^>]*title="([^"]+)""#,
@@ -33,7 +36,7 @@ enum SampleLibrary {
         baseURL: "https://www.example.com",
         searchTemplate: "https://www.example.com/search?q={query}&page={page}",
         isComic: true,
-        isEnabled: false,
+        isEnabled: true,
         sortOrder: 1,
         rules: SourceRules(
             listPattern: #"<a[^>]+href="([^"]+)"[^>]*>\s*([^<]{1,40})\s*</a>"#,
