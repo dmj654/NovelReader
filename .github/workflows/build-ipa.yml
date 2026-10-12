@@ -1,26 +1,48 @@
 name: Build iOS IPA (unsigned)
 
+# 在 GitHub 的 macOS 云端机器上编译，产出未签名 IPA。
+# 拿到 IPA 后，用 Windows 上的 Sideloadly / AltServer 用自己的 Apple ID 签名装进 iPhone。
+#
+# 触发方式：任何 push 到默认分支都会跑；也可以在 Actions 页面手动点 Run workflow。
+# 注意：不要再加 paths 过滤——文件拖进仓库时目录层级一旦不对，过滤会导致 Actions 完全不触发。
+
 on:
   workflow_dispatch:
   push:
-    branches: [main]
-    paths:
-      - "NovelReader/**"
-      - "project.yml"
-      - ".github/workflows/build-ipa.yml"
+    branches: ["main", "master"]
 
 jobs:
   build:
     name: Archive & Package
-    runs-on: macos-15
+    runs-on: macos-15          # 也可用 macos-14；公开仓库免费使用
     timeout-minutes: 30
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Show source tree
+        run: |
+          echo "=== 仓库根目录 ==="
+          ls -1
+          echo "=== 源码文件数 ==="
+          find NovelReader -name "*.swift" | wc -l
+          echo "（如果上面不是几十个，说明上传时目录层级错了）"
+
       - name: Show Xcode version
         run: xcodebuild -version
+
+      # 只做语法解析，不做完整编译：有语法错误的话 1 分钟就暴露，不用等 10 分钟。
+      # 这一步失败不会打断构建（continue-on-error），正式结果仍以 Archive 为准。
+      - name: Swift syntax quick check
+        continue-on-error: true
+        run: |
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          FILES=$(find NovelReader -name "*.swift" | sort)
+          echo "语法快检 $(echo "$FILES" | wc -l | tr -d ' ') 个文件"
+          xcrun swiftc -parse -sdk "$SDK" -target arm64-apple-ios17.0 -swift-version 5 $FILES \
+            && echo "语法快检通过 ✅" \
+            || echo "语法快检有问题 ⚠️ 下面看 Archive 步骤的正式结果"
 
       - name: Install XcodeGen
         run: |
@@ -61,3 +83,10 @@ jobs:
           name: NovelReader-unsigned-ipa
           path: build/NovelReader-unsigned.ipa
           retention-days: 30
+
+      - name: Summary
+        run: |
+          echo "### 构建完成 ✅" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "在 Artifacts 里下载 \`NovelReader-unsigned-ipa\`，" >> $GITHUB_STEP_SUMMARY
+          echo "再用 Sideloadly / AltServer 用自己的 Apple ID 签名安装到 iPhone。" >> $GITHUB_STEP_SUMMARY
